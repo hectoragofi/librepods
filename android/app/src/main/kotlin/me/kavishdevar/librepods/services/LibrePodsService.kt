@@ -43,6 +43,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.kavishdevar.librepods.LibrePodsApplication
@@ -127,6 +131,10 @@ class LibrePodsService: Service() {
     }
 
     private val heartRateWatchdogs = mutableMapOf<MacAddress, HeartRateWatchdog>()
+
+    private val workoutRepository by lazy {
+        (application as LibrePodsApplication).workoutRepository
+    }
 
 
     private val bleManager by lazy {
@@ -570,6 +578,7 @@ class LibrePodsService: Service() {
 
                 observeAppleState(device)
                 startHeartRateWatchdog(device)
+                observeHeartRateForWorkouts(device)
                 observeAppleSettings(device)
                 observeAppleMetadata(device)
                 observeAppleMicrophoneFrames(device)
@@ -898,6 +907,24 @@ class LibrePodsService: Service() {
                     }
                 }
                 previousState = state
+            }
+        }
+    }
+
+    /**
+     * Records every new heart-rate reading into the active workout. Runs in the foreground service,
+     * so recording continues with the screen off.
+     */
+    private fun observeHeartRateForWorkouts(device: AppleDevice) {
+        serviceCoroutineScope.launch {
+            workoutRepository.activeSessionId.distinctUntilChanged().collectLatest { sessionId ->
+                if (sessionId == null) return@collectLatest
+                Log.i(TAG, "workout active, recording heart rate from ${device.macAddress.toRedactedString()}")
+                device.state
+                    .map { it.currentHeartRate }
+                    .distinctUntilChanged()
+                    .filterNotNull()
+                    .collect { sample -> workoutRepository.recordValidatedSample(sample) }
             }
         }
     }

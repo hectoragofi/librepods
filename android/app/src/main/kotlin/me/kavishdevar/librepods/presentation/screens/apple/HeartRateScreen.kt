@@ -76,7 +76,8 @@ import kotlin.time.Duration.Companion.milliseconds
 fun HeartRateRoute(
     viewModel: AppleViewModel,
     macAddress: MacAddress,
-    navigateBack: (() -> Unit)?
+    navigateBack: (() -> Unit)?,
+    navigateToWorkout: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val app = LocalContext.current.applicationContext as LibrePodsApplication
@@ -98,6 +99,7 @@ fun HeartRateRoute(
             viewModel.stopHr()
         },
         retryRecovery = { HeartRateWatchdogs.retry(macAddress) },
+        navigateToWorkout = navigateToWorkout,
         setHrRange = viewModel::setHrRange,
         updateSettings = viewModel::updateSettings
     )
@@ -111,6 +113,7 @@ fun HeartRateScreen(
     startHr: () -> Unit,
     stopHr: () -> Unit,
     retryRecovery: () -> Unit = {},
+    navigateToWorkout: () -> Unit = {},
     setHrRange: (ClosedRange<Long>) -> Unit,
     updateSettings: (transform: (AppleSettings) -> AppleSettings) -> Unit,
 ) {
@@ -308,6 +311,12 @@ fun HeartRateScreen(
                     orientation = StyledListItemOrientation.Vertical
                 )
             }
+
+            StyledListItem(
+                contentText = stringResource(R.string.workout),
+                supportingText = stringResource(R.string.workout_entry_description),
+                onClick = navigateToWorkout,
+            )
 
             AnimatedVisibility(visible = !healthPermissions.status.isGranted) {
                 StyledListItem(

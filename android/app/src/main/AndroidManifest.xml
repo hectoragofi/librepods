@@ -50,6 +50,7 @@
     <uses-permission android:name="com.android.vending.BILLING" />
 
     <uses-permission android:name="android.permission.health.WRITE_HEART_RATE"/>
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE"/>
 
     <application
         android:name=".LibrePodsApplication"

@@ -124,6 +124,18 @@ sealed interface Screen: NavKey {
         override val macAddress: MacAddress
     ): DeviceScreen
 
+    // Workout screens are not DeviceScreens so they stay open while the AirPods are disconnected.
+    @Serializable
+    data object Workout: Screen
+
+    @Serializable
+    data object WorkoutHistory: Screen
+
+    @Serializable
+    data class WorkoutDetail(
+        val sessionId: String
+    ): Screen
+
     @Serializable
     data object AppAccessibilitySettings: Screen
 

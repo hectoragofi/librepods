@@ -1,0 +1,188 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "0d2e5452108e1606b8ce9cde8c365087",
+    "entities": [
+      {
+        "tableName": "workout_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `startTimeEpochMillis` INTEGER NOT NULL, `startZoneOffsetSeconds` INTEGER NOT NULL, `endTimeEpochMillis` INTEGER, `endZoneOffsetSeconds` INTEGER, `maxHeartRateBpm` INTEGER NOT NULL, `healthConnectClientRecordId` TEXT NOT NULL, `healthConnectRecordId` TEXT, `healthConnectExportState` TEXT NOT NULL, `healthConnectExportMessage` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startTimeEpochMillis",
+            "columnName": "startTimeEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startZoneOffsetSeconds",
+            "columnName": "startZoneOffsetSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endTimeEpochMillis",
+            "columnName": "endTimeEpochMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endZoneOffsetSeconds",
+            "columnName": "endZoneOffsetSeconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "maxHeartRateBpm",
+            "columnName": "maxHeartRateBpm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "healthConnectClientRecordId",
+            "columnName": "healthConnectClientRecordId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "healthConnectRecordId",
+            "columnName": "healthConnectRecordId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "healthConnectExportState",
+            "columnName": "healthConnectExportState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "healthConnectExportMessage",
+            "columnName": "healthConnectExportMessage",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_workout_sessions_startTimeEpochMillis",
+            "unique": false,
+            "columnNames": [
+              "startTimeEpochMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_workout_sessions_startTimeEpochMillis` ON `${TABLE_NAME}` (`startTimeEpochMillis`)"
+          },
+          {
+            "name": "index_workout_sessions_endTimeEpochMillis",
+            "unique": false,
+            "columnNames": [
+              "endTimeEpochMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_workout_sessions_endTimeEpochMillis` ON `${TABLE_NAME}` (`endTimeEpochMillis`)"
+          }
+        ]
+      },
+      {
+        "tableName": "workout_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` TEXT NOT NULL, `timestampEpochMillis` INTEGER NOT NULL, `sequence` INTEGER NOT NULL, `bpm` INTEGER NOT NULL, FOREIGN KEY(`sessionId`) REFERENCES `workout_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampEpochMillis",
+            "columnName": "timestampEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bpm",
+            "columnName": "bpm",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_workout_samples_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_workout_samples_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_workout_samples_sessionId_timestampEpochMillis",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "timestampEpochMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_workout_samples_sessionId_timestampEpochMillis` ON `${TABLE_NAME}` (`sessionId`, `timestampEpochMillis`)"
+          },
+          {
+            "name": "index_workout_samples_sessionId_timestampEpochMillis_sequence",
+            "unique": true,
+            "columnNames": [
+              "sessionId",
+              "timestampEpochMillis",
+              "sequence"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_workout_samples_sessionId_timestampEpochMillis_sequence` ON `${TABLE_NAME}` (`sessionId`, `timestampEpochMillis`, `sequence`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "workout_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0d2e5452108e1606b8ce9cde8c365087')"
+    ]
+  }
+}
