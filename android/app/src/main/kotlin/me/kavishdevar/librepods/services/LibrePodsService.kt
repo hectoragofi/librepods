@@ -8,6 +8,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.appwidget.AppWidgetManager
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanSettings
@@ -134,6 +135,24 @@ class LibrePodsService: Service() {
 
     private val workoutRepository by lazy {
         (application as LibrePodsApplication).workoutRepository
+    }
+
+    private val heartRateBlePeripheral by lazy {
+        (application as LibrePodsApplication).heartRateBlePeripheral
+    }
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent) {
+            if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+            if (state == BluetoothAdapter.STATE_ON || state == BluetoothAdapter.STATE_OFF) {
+                // The GATT server and advertiser do not survive a radio restart; rebuild them.
+                if (heartRatePreferences.bleSharingEnabled.value) {
+                    heartRateBlePeripheral.stop()
+                    heartRateBlePeripheral.start()
+                }
+            }
+        }
     }
 
 
@@ -283,6 +302,8 @@ class LibrePodsService: Service() {
         observeAppSettings()
 
         registerBluetoothReceivers()
+        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), RECEIVER_NOT_EXPORTED)
+        observeHeartRateBleSharingSetting()
 
         loadDevices()
 
@@ -362,6 +383,11 @@ class LibrePodsService: Service() {
             heartRateWatchdogs.clear()
         }
         unregisterBluetoothReceivers()
+        try {
+            unregisterReceiver(bluetoothStateReceiver)
+        } catch (_: IllegalArgumentException) {
+        }
+        heartRateBlePeripheral.stop()
         bleManager.stop()
         serviceCoroutineScope.cancel("Service stopped")
         super.onDestroy()
@@ -579,6 +605,7 @@ class LibrePodsService: Service() {
                 observeAppleState(device)
                 startHeartRateWatchdog(device)
                 observeHeartRateForWorkouts(device)
+                observeHeartRateForBleSharing(device)
                 observeAppleSettings(device)
                 observeAppleMetadata(device)
                 observeAppleMicrophoneFrames(device)
@@ -925,6 +952,24 @@ class LibrePodsService: Service() {
                     .distinctUntilChanged()
                     .filterNotNull()
                     .collect { sample -> workoutRepository.recordValidatedSample(sample) }
+            }
+        }
+    }
+
+    private fun observeHeartRateForBleSharing(device: AppleDevice) {
+        serviceCoroutineScope.launch {
+            device.state
+                .map { it.currentHeartRate }
+                .distinctUntilChanged()
+                .filterNotNull()
+                .collect { sample -> heartRateBlePeripheral.onValidatedSample(sample) }
+        }
+    }
+
+    private fun observeHeartRateBleSharingSetting() {
+        serviceCoroutineScope.launch {
+            heartRatePreferences.bleSharingEnabled.collect { enabled ->
+                heartRateBlePeripheral.setEnabled(enabled)
             }
         }
     }

@@ -78,6 +78,7 @@ fun HeartRateRoute(
     macAddress: MacAddress,
     navigateBack: (() -> Unit)?,
     navigateToWorkout: () -> Unit = {},
+    navigateToSharing: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val app = LocalContext.current.applicationContext as LibrePodsApplication
@@ -100,6 +101,7 @@ fun HeartRateRoute(
         },
         retryRecovery = { HeartRateWatchdogs.retry(macAddress) },
         navigateToWorkout = navigateToWorkout,
+        navigateToSharing = navigateToSharing,
         setHrRange = viewModel::setHrRange,
         updateSettings = viewModel::updateSettings
     )
@@ -114,6 +116,7 @@ fun HeartRateScreen(
     stopHr: () -> Unit,
     retryRecovery: () -> Unit = {},
     navigateToWorkout: () -> Unit = {},
+    navigateToSharing: () -> Unit = {},
     setHrRange: (ClosedRange<Long>) -> Unit,
     updateSettings: (transform: (AppleSettings) -> AppleSettings) -> Unit,
 ) {
@@ -316,6 +319,15 @@ fun HeartRateScreen(
                 contentText = stringResource(R.string.workout),
                 supportingText = stringResource(R.string.workout_entry_description),
                 onClick = navigateToWorkout,
+                index = 0,
+                count = 2,
+            )
+            StyledListItem(
+                contentText = stringResource(R.string.heart_rate_sharing),
+                supportingText = stringResource(R.string.heart_rate_sharing_entry_description),
+                onClick = navigateToSharing,
+                index = 1,
+                count = 2,
             )
 
             AnimatedVisibility(visible = !healthPermissions.status.isGranted) {

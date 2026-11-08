@@ -132,6 +132,9 @@ sealed interface Screen: NavKey {
     data object WorkoutHistory: Screen
 
     @Serializable
+    data object HeartRateSharing: Screen
+
+    @Serializable
     data class WorkoutDetail(
         val sessionId: String
     ): Screen

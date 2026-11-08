@@ -514,4 +514,18 @@
     <string name="workout_hc_error">Export failed. The workout is still saved here.</string>
     <string name="workout_db_backup_notice">Older workout data could not be opened and was kept as %1$s in the app database folder.</string>
     <string name="workout_db_backup_dismiss">Tap to dismiss</string>
+    <!-- BLE heart-rate sharing -->
+    <string name="heart_rate_sharing">Heart-rate sharing</string>
+    <string name="heart_rate_sharing_entry_description">Use your AirPods as a Bluetooth heart-rate sensor</string>
+    <string name="heart_rate_sharing_toggle">Share as a BLE heart-rate sensor</string>
+    <string name="heart_rate_sharing_description">Advertises the standard Heart Rate Service so fitness apps, bike computers and watches can pair with this phone like a chest strap.</string>
+    <string name="heart_rate_sharing_note">Readings are only sent while heart-rate monitoring is running. Turn it on from the Heart Rate screen or start a workout.</string>
+    <string name="heart_rate_sharing_grant">Tap to allow Nearby devices</string>
+    <string name="heart_rate_sharing_status_off">Off</string>
+    <string name="heart_rate_sharing_status_starting">Starting…</string>
+    <string name="heart_rate_sharing_status_advertising">Advertising · %1$d connected · %2$d subscribed</string>
+    <string name="heart_rate_sharing_status_permission">Nearby devices permission needed</string>
+    <string name="heart_rate_sharing_status_bluetooth_off">Bluetooth is off</string>
+    <string name="heart_rate_sharing_status_unsupported">Not supported on this phone</string>
+    <string name="heart_rate_sharing_status_error">Could not start</string>
 </resources>

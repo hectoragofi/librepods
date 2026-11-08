@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import me.kavishdevar.librepods.billing.BillingManager
 import me.kavishdevar.librepods.billing.BillingProviderFactory
 import me.kavishdevar.librepods.core.utils.GestureFeedback
+import me.kavishdevar.librepods.bluetooth.HeartRateBlePeripheral
 import me.kavishdevar.librepods.data.heartrate.HeartRatePreferences
 import me.kavishdevar.librepods.data.workout.RoomWorkoutLocalStore
 import me.kavishdevar.librepods.data.workout.WorkoutDatabase
@@ -54,6 +55,9 @@ class LibrePodsApplication: Application(), XposedServiceHelper.OnServiceListener
     private val heartRateSharedPreferences by lazy {
         getSharedPreferences(HeartRatePreferences.PREFERENCES_NAME, MODE_PRIVATE)
     }
+
+    /** Driven by LibrePodsService; screens only read its state. */
+    val heartRateBlePeripheral by lazy { HeartRateBlePeripheral(applicationContext) }
 
     val workoutPreferences by lazy { WorkoutPreferences(heartRateSharedPreferences) }
 
