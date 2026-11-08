@@ -48,6 +48,10 @@ void own3d_reset(Own3D *o);
 /* Interleaved stereo s16 in -> out, any frame count, fixed latency OWN3D_LATENCY. */
 void own3d_process(Own3D *o, const int16_t *in, int16_t *out, int frames, float gain);
 float own3d_agc_gain(const Own3D *o);
+/* 1 while the renderer is gated off (silent input for ~1 s + reverb tail; output is zeros and
+   nearly no CPU is used). The first non-silent block resumes it with a 5 ms fade-in. */
+int own3d_idle(const Own3D *o);
+long own3d_idle_blocks(const Own3D *o);
 /* Renders `seconds` of a synthetic signal on this instance (then resets it); one-line report. */
 double own3d_selftest(Own3D *o, char *report, int report_len, double seconds);
 int64_t own3d_now_ns(void);

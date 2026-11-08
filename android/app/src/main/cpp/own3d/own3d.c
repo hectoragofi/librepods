@@ -13,9 +13,14 @@
 //     with its binaural room filter = HRIR + sparse image-source early reflections, uniformly
 //     partitioned overlap-save (pffft, 5 x 480 taps). Two filter banks: a worker thread builds
 //     the spare one, the render thread crossfades over one block.
-//  3. 8-line FDN late reverb with pre-delay, band-limited input, low level.
+//  3. 8-line FDN late reverb at 24 kHz (2:1, its input is 320 Hz-6 kHz band-limited), pre-delay,
+//     low level. Early reflections can get their own low cut (er_lowcut_hz).
 //  4. Original-stereo blend, adaptive width (keeps IACC below plain stereo), tone (shelves +
 //     5-band EQ), slow K-weighted loudness match, 2 ms look-ahead limiter at -1 dBFS.
+//  5. Silence gating: ~1 s of silent input (plus 1.5 x RT60 of tail) and the renderer stops
+//     (zeros out, almost no CPU); the first non-silent block resumes it with a 5 ms fade-in.
+// Cost: silent filter partitions and muted speakers are skipped, the limiter's window minimum is
+// a monotonic deque, 0 dB tone sections are bypassed, upmix masks are branch-free (NEON).
 #include "own3d.h"
 #include "pffft/pffft.h"
 #include <math.h>
@@ -71,6 +76,7 @@ enum {
   P_LS_F, P_LS_DB, P_HS_F, P_HS_DB, P_EQ1, P_EQ2, P_EQ3, P_EQ4, P_EQ5,
   P_ROOM_SIZE, P_ER_ORDER, P_ER_DB, P_LATE_DB, P_RT60, P_PREDELAY, P_DAMPING,
   P_BLEND, P_WIDTH, P_LOUD, P_OUT_DB, P_HRTF,
+  P_ER_LOWCUT,   /* appended: ids of older presets stay valid */
   NPARAM
 };
 static Own3DParam ptab[NPARAM];
@@ -132,6 +138,7 @@ static void params_init(void) {
   defp(P_LOUD, "loud_db", "Loudness vs NORMAL (dB)", "Global", -6, 6, 2, 0.5f, 0);
   defp(P_OUT_DB, "out_db", "OWN 3D output trim (dB)", "Global", -12, 6, 0, 0.5f, 0);
   defp(P_HRTF, "hrtf", "HRTF subject", "Global", 0, OWN3D_MAX_HRTF - 1, 0, 1, 1);
+  defp(P_ER_LOWCUT, "er_lowcut_hz", "Reflection low cut (Hz, 20 = off)", "Room", 20, 800, 20, 10, 1);
   done = 1;
 }
 int own3d_param_count(void) { params_init(); return NPARAM; }
@@ -143,7 +150,9 @@ int own3d_param_find(const char *key) {
 }
 
 /* ---------------- DSP helpers ---------------- */
-static const int fdn_len[NL] = {1153, 1327, 1559, 1733, 1951, 2113, 2341, 2539};
+/* the late reverb runs at 24 kHz (its input is low-passed at ~6 kHz): half the cost */
+#define FS_FDN 24000.0f
+static const int fdn_len[NL] = {577, 661, 773, 863, 977, 1051, 1171, 1259};
 static const float fdn_sgn[NL] = {1, -1, 1, -1, 1, 1, -1, -1};
 
 typedef struct { char name[32]; int ndirs, ntaps; float *vec; float *ir; } Hrtf;
@@ -154,11 +163,16 @@ typedef struct {
   float lp[NL];
   float preL[FDN_MAX], preR[FDN_MAX];
   int prePos;
-  float hpYL, hpYR, hpXL, hpXR, lpL, lpR;
+  float hpYL, hpYR, hpXL, hpXR, hp2YL, hp2YR, hp2XL, hp2XR, lpL, lpR;
+  /* 2:1 decimation / linear-interpolation state (render thread) */
+  float dIn[2], yPrev[2], yCur[2];
+  int phase;
 } Fdn;
 typedef struct {
   float *H[NS][2][P];
   float fdnG[NL], fdnDamp, lateGain;
+  unsigned char nz[NS][2][P];   /* partition has energy above -100 dB of the strongest one */
+  int nParts;
   int preDelay, lowDelay;
 } Bank;
 
@@ -168,7 +182,8 @@ struct Own3D {
   float *work, *tbuf, *XL, *XR, *Y[NS];
   float win[N];
   float histL[B], histR[B];
-  float pll[B + 1], prr[B + 1], plrRe[B + 1], plrIm[B + 1], wSm[B + 1], aSm[B + 1], pSm[B + 1];
+  float pll[B + 3], prr[B + 3], plrRe[B + 3], plrIm[B + 3], wSm[B + 1], aSm[B + 1], pSm[B + 1];
+  float gm[6][B + 1];   /* per-bin gains: FL FR C SL SR rear */
   float ola[NS][B];
   float spk[NS][B];
   float xprev[NS][B];
@@ -177,6 +192,8 @@ struct Own3D {
   float *acc[2];
   float ear[2][B], earB[2][B];
   float spkGain[NS], subGain;
+  int spkSilent[NS];   /* blocks since the speaker feed was last non-zero */
+  float spkG0[NS];     /* gain at the start of the current block */
   Fdn fdn;
   /* filter banks: render uses bank[active]; worker builds bank[1 - active] then sets pending */
   Bank bank[2];
@@ -198,6 +215,7 @@ struct Own3D {
   float hiL[B], hiR[B];
   /* tone */
   Biquad tone[2][7];
+  int toneOn[7];
   /* width */
   double msM, msS;
   float wGain, wTarget;
@@ -209,12 +227,18 @@ struct Own3D {
   /* limiter */
   float laL[LA_RING], laR[LA_RING], laT[LA_RING];
   int laPos;
+  float dqV[LA_RING];
+  unsigned dqI[LA_RING], dqH, dqT, laN;
   float lim;
   /* block FIFOs */
   float inL[B], inR[B];
   int inCount;
   int16_t outFifo[2 * 2 * B];
   int outCount;
+  /* silence gating: after ~1 s of silent input (plus the reverb tail) the renderer stops */
+  int silentBlocks, idle, fadeIn;
+  long idleBlocks;
+  float outPeak;
 };
 
 int64_t own3d_now_ns(void) {
@@ -265,6 +289,10 @@ static void bq_shelf(Biquad *q, double f0, double gainDb, int high) {   /* RBJ s
 static void bq_peak(Biquad *q, double f0, double gainDb, double Q) {
   double A = pow(10.0, gainDb / 40.0), w = 2 * 3.14159265358979 * f0 / 48000.0, al = sin(w) / (2 * Q), c = cos(w);
   bq_coef(q, 1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A);
+}
+static void bq_run(Biquad q, float *x, int n) {   /* in place, from zero state */
+  q.z1 = q.z2 = 0;
+  for (int i = 0; i < n; i++) x[i] = bq(&q, x[i]);
 }
 static void kweight_init(Biquad k[2]) {   /* ITU-R BS.1770 K-weighting at 48 kHz */
   bq_coef(&k[0], 1.53512485958697, -2.69169618940638, 1.19839281085285, 1, -1.69065929318241, 0.73248077421585);
@@ -324,16 +352,20 @@ static void splat(float dst[2][FL_LEN], const float *hr, int ntaps, float t, flo
 
 /* ---------------- FDN ---------------- */
 static inline void fdn_tick(Fdn *f, const float *g, float damp, int preDelay, float xl, float xr, float *outL, float *outR) {
-  /* pre-delay, then band-limit: one-pole HP ~300 Hz (kick/sub stay dry), LP ~6 kHz */
+  /* pre-delay, then band-limit: 2nd-order HP ~320 Hz (two one-poles: gentle 12 dB/oct, kick,
+     bass and low-mids stay dry, so the tail never thickens the low-mids), LP ~6 kHz.
+     Runs at FS_FDN. */
   f->preL[f->prePos] = xl; f->preR[f->prePos] = xr;
   int rp = (f->prePos - preDelay) & (FDN_MAX - 1);
   xl = f->preL[rp]; xr = f->preR[rp];
   f->prePos = (f->prePos + 1) & (FDN_MAX - 1);
-  const float ah = 0.96223f, cl = 0.5436f;
+  const float ah = 0.9226f, cl = 0.7921f;
   f->hpYL = ah * (f->hpYL + xl - f->hpXL); f->hpXL = xl;
   f->hpYR = ah * (f->hpYR + xr - f->hpXR); f->hpXR = xr;
-  f->lpL += cl * (f->hpYL - f->lpL);
-  f->lpR += cl * (f->hpYR - f->lpR);
+  f->hp2YL = ah * (f->hp2YL + f->hpYL - f->hp2XL); f->hp2XL = f->hpYL;
+  f->hp2YR = ah * (f->hp2YR + f->hpYR - f->hp2XR); f->hp2XR = f->hpYR;
+  f->lpL += cl * (f->hp2YL - f->lpL);
+  f->lpR += cl * (f->hp2YR - f->lpR);
   float y[NL], v[NL];
   for (int i = 0; i < NL; i++) {
     y[i] = f->buf[i][(f->idx - fdn_len[i]) & (FDN_MAX - 1)];
@@ -354,6 +386,26 @@ static inline void fdn_tick(Fdn *f, const float *g, float damp, int preDelay, fl
 }
 
 /* ---------------- filter build (worker thread) ---------------- */
+/* Band powers (dB) of the direct sound: HRIR power spectra of the HRTF speakers, weighted by the
+   share of the programme each one usually carries. 5 points per band. */
+/* direct sound of speaker s (HRIR or plain impulse) into dst */
+static void spk_direct(const Hrtf *h, const float *pp, int pk, int s, float dst[2][FL_LEN]) {
+  const float c = 343.0f;
+  float a = pp[SP(s, K_AZ)] * PI_F / 180, e = pp[SP(s, K_EL)] * PI_F / 180, dist = pp[SP(s, K_DIST)];
+  float src[3] = {dist * cosf(e) * cosf(a), dist * cosf(e) * sinf(a), dist * sinf(e)};
+  float off = SPK_DELAY_MS[s] * pp[P_DECORR] * FS / 1000.0f + (dist - 2.0f) / c * FS;
+  if (off < 0) off = 0;
+  float dg = 2.0f / dist;
+  if (pp[SP(s, K_DIRECT)] > 0.5f) {
+    /* direct: no HRTF, no room; a delayed impulse to the ear on its side (both for centre) */
+    int ti = (int)(off + pk);
+    float sn = sinf(a);
+    float gl = sn > 0.2f ? 1.0f : sn < -0.2f ? 0.0f : 0.70710678f, gr = sn < -0.2f ? 1.0f : sn > 0.2f ? 0.0f : 0.70710678f;
+    if (ti < FL_LEN) { dst[0][ti] = gl * dg; dst[1][ti] = gr * dg; }
+    return;
+  }
+  splat(dst, hrir_near(h, src[0], src[1], src[2]), h->ntaps, off, dg, 0);
+}
 static void build_bank(Own3D *o, Bank *bk, const float *pp) {
   int hi = (int)pp[P_HRTF];
   if (hi < 0 || hi >= o->nHrtf) hi = 0;
@@ -381,16 +433,8 @@ static void build_bank(Own3D *o, Bank *bk, const float *pp) {
     float src[3] = {dist * cosf(e) * cosf(a), dist * cosf(e) * sinf(a), dist * sinf(e)};
     float off = SPK_DELAY_MS[s] * pp[P_DECORR] * FS / 1000.0f + (dist - 2.0f) / c * FS;
     if (off < 0) off = 0;
-    float dg = 2.0f / dist;
-    if (pp[SP(s, K_DIRECT)] > 0.5f) {
-      /* direct: no HRTF, no room; a delayed impulse to the ear on its side (both for centre) */
-      int ti = (int)(off + pk);
-      float sn = sinf(a);
-      float gl = sn > 0.2f ? 1.0f : sn < -0.2f ? 0.0f : 0.70710678f, gr = sn < -0.2f ? 1.0f : sn > 0.2f ? 0.0f : 0.70710678f;
-      if (ti < FL_LEN) { o->dirT[s][0][ti] = gl * dg; o->dirT[s][1][ti] = gr * dg; }
-      continue;
-    }
-    splat(o->dirT[s], hrir_near(h, src[0], src[1], src[2]), h->ntaps, off, dg, 0);
+    spk_direct(h, pp, pk, s, o->dirT[s]);
+    if (pp[SP(s, K_DIRECT)] > 0.5f) continue;
     for (int nx = -R; nx <= R; nx++)
       for (int ny = -R; ny <= R; ny++)
         for (int nz = -R; nz <= R; nz++) {
@@ -412,6 +456,12 @@ static void build_bank(Own3D *o, Bank *bk, const float *pp) {
           splat(o->erT[s], hrir_near(h, p[0], p[1], p[2]), h->ntaps, t, g * 2.0f / d, lpc);
         }
   }
+  /* early reflections: optional gentle high-pass (12 dB/oct); 20 Hz = off */
+  if (pp[P_ER_LOWCUT] > 25) {
+    Biquad hp;
+    bq_butter(&hp, pp[P_ER_LOWCUT], 1);
+    for (int s = 0; s < NS; s++) for (int ee = 0; ee < 2; ee++) bq_run(hp, o->erT[s][ee], FL_LEN);
+  }
   /* Level reference: a frontal +-30 phantom centre at one ear has unit gain at ~250 Hz, so the
      rendered band meets the untouched sub band without a step, whatever the speaker layout. */
   const float *ha = hrir_near(h, 0.866f, 0.5f, 0), *hb = hrir_near(h, 0.866f, -0.5f, 0);
@@ -430,24 +480,38 @@ static void build_bank(Own3D *o, Bank *bk, const float *pp) {
   /* late reverb level relative to the direct energy of a frontal source */
   double ed = 0;
   for (int i = 0; i < h->ntaps; i++) ed += (h0[i] * h0[i] + h0[h->ntaps + i] * h0[h->ntaps + i]) * norm * norm;
-  for (int i = 0; i < NL; i++) bk->fdnG[i] = powf(10.0f, -3.0f * fdn_len[i] / (FS * pp[P_RT60]));
-  bk->fdnDamp = 0.15f + 0.5f * damp;
-  bk->preDelay = (int)((pp[P_PREDELAY] + 8.0f) * FS / 1000.0f);
+  for (int i = 0; i < NL; i++) bk->fdnG[i] = powf(10.0f, -3.0f * fdn_len[i] / (FS_FDN * pp[P_RT60]));
+  bk->fdnDamp = 0.5f * (0.15f + 0.5f * damp);   /* same loop damping as the former 48 kHz FDN */
+  bk->preDelay = (int)((pp[P_PREDELAY] + 8.0f) * FS_FDN / 1000.0f);
   if (bk->preDelay > FDN_MAX - 1) bk->preDelay = FDN_MAX - 1;
   {
     Fdn *f = &o->fdnScratch;
     memset(f, 0, sizeof *f);
     double en = 0;
-    for (int i = 0; i < 48000; i++) {
+    for (int i = 0; i < (int)(2 * FS_FDN); i++) {
       float x, y;
       fdn_tick(f, bk->fdnG, bk->fdnDamp, 0, i == 0 ? 1.0f : 0.0f, 0.0f, &x, &y);
       en += 0.5 * ((double)x * x + (double)y * y);
     }
-    bk->lateGain = (float)(1.0 / sqrt(en + 1e-20) * sqrt(ed / 2 * pow(10.0, pp[P_LATE_DB] / 10.0)));
+    /* a 48 kHz impulse reaches the 24 kHz FDN at 1/2 and each output sample is used twice */
+    bk->lateGain = (float)(1.0 / sqrt(en / 2 + 1e-20) * sqrt(ed / 2 * pow(10.0, pp[P_LATE_DB] / 10.0)));
   }
+  /* partitions that are (near) silent are skipped by the convolution: sparse late reflections
+     and short layouts cost nothing */
+  double emax = 0, ep[NS][2][P];
   for (int s = 0; s < NS; s++)
     for (int ee = 0; ee < 2; ee++)
       for (int p = 0; p < P; p++) {
+        double e = 0;
+        for (int i = 0; i < B; i++) e += (double)o->dirT[s][ee][p * B + i] * o->dirT[s][ee][p * B + i];
+        ep[s][ee][p] = e; if (e > emax) emax = e;
+      }
+  bk->nParts = 0;
+  for (int s = 0; s < NS; s++)
+    for (int ee = 0; ee < 2; ee++)
+      for (int p = 0; p < P; p++) {
+        bk->nz[s][ee][p] = ep[s][ee][p] > emax * 1e-8;
+        bk->nParts += bk->nz[s][ee][p];
         memcpy(o->wtbuf, &o->dirT[s][ee][p * B], B * sizeof(float));
         memset(o->wtbuf + B, 0, B * sizeof(float));
         pffft_transform(o->fft, o->wtbuf, bk->H[s][ee][p], o->wwork, PFFFT_FORWARD);
@@ -470,12 +534,6 @@ void own3d_rebuild(Own3D *o) {
 }
 
 /* ---------------- upmix ---------------- */
-static inline void bin_at(const float *X, int k, float *re, float *im) {
-  if (k == 0) { *re = X[0]; *im = 0; }
-  else if (k == B) { *re = X[1]; *im = 0; }
-  else { *re = X[2 * k]; *im = X[2 * k + 1]; }
-}
-
 static void upmix(Own3D *o, const float *L, const float *R) {
   for (int i = 0; i < B; i++) {
     o->tbuf[i] = o->histL[i] * o->win[i];
@@ -490,63 +548,87 @@ static void upmix(Own3D *o, const float *L, const float *R) {
   memcpy(o->histL, L, sizeof o->histL);
   memcpy(o->histR, R, sizeof o->histR);
 
+#ifdef OWN3D_PROFILE
+  int64_t q0 = own3d_now_ns();
+#endif
+  /* statistics live at index k + 1 (0 and B + 2 are zero pads for the 3-bin smoothing) */
   const float al = 0.8f, eps = 1e-12f;
-  for (int k = 0; k <= B; k++) {
-    float ar, ai, br, bi;
-    bin_at(o->XL, k, &ar, &ai);
-    bin_at(o->XR, k, &br, &bi);
-    o->pll[k] = al * o->pll[k] + (1 - al) * (ar * ar + ai * ai);
-    o->prr[k] = al * o->prr[k] + (1 - al) * (br * br + bi * bi);
-    o->plrRe[k] = al * o->plrRe[k] + (1 - al) * (ar * br + ai * bi);  /* a * conj(b) */
-    o->plrIm[k] = al * o->plrIm[k] + (1 - al) * (ai * br - ar * bi);
+  float *pll = o->pll + 1, *prr = o->prr + 1, *pre = o->plrRe + 1, *pim = o->plrIm + 1;
+  pll[0] = (1 - al) * (o->XL[0] * o->XL[0]) + al * pll[0];
+  prr[0] = (1 - al) * (o->XR[0] * o->XR[0]) + al * prr[0];
+  pre[0] = (1 - al) * (o->XL[0] * o->XR[0]) + al * pre[0];
+  pim[0] = al * pim[0];
+  pll[B] = (1 - al) * (o->XL[1] * o->XL[1]) + al * pll[B];
+  prr[B] = (1 - al) * (o->XR[1] * o->XR[1]) + al * prr[B];
+  pre[B] = (1 - al) * (o->XL[1] * o->XR[1]) + al * pre[B];
+  pim[B] = al * pim[B];
+  for (int k = 1; k < B; k++) {
+    float ar = o->XL[2 * k], ai = o->XL[2 * k + 1], br = o->XR[2 * k], bi = o->XR[2 * k + 1];
+    pll[k] = al * pll[k] + (1 - al) * (ar * ar + ai * ai);
+    prr[k] = al * prr[k] + (1 - al) * (br * br + bi * bi);
+    pre[k] = al * pre[k] + (1 - al) * (ar * br + ai * bi);  /* a * conj(b) */
+    pim[k] = al * pim[k] + (1 - al) * (ai * br - ar * bi);
   }
   float amb_scale = o->param[P_AMBIENCE];
   float ks = 0.75f * amb_scale, kr = 0.60f * amb_scale, kk = ks * ks + kr * kr;
   if (kk > 0.95f) { float sc = sqrtf(0.95f / kk); ks *= sc; kr *= sc; kk = 0.95f; }
   const float cMax = o->param[P_CENTER], sidePan = o->param[P_SIDEPAN];
   const int kLow = (int)(o->xoverHz / 50.0f) + 1;   /* bins below the crossover: leave on the fronts */
+  /* branch-free per-bin masks (vectorisable); edges use the zero pads, i.e. 2-bin smoothing */
   for (int k = 0; k <= B; k++) {
     /* 3-bin frequency smoothing of the statistics: steadier masks, less phasiness */
-    int k0 = k > 0 ? k - 1 : k, k1 = k < B ? k + 1 : k;
-    float pl = 0, prr = 0, cr = 0, ci = 0;
-    for (int j = k0; j <= k1; j++) { pl += o->pll[j]; prr += o->prr[j]; cr += o->plrRe[j]; ci += o->plrIm[j]; }
-    float cross = sqrtf(cr * cr + ci * ci);
-    float prod = sqrtf(pl * prr) + eps;
-    float coh = cross / prod; if (coh > 1) coh = 1;
-    float bal = 2 * prod / (pl + prr + 2 * eps);
-    float pan = (pl - prr) / (pl + prr + eps);
-    float inphase = cr > 0 ? cr / (cross + eps) : 0.0f;
-    o->pSm[k] += 0.25f * (pan - o->pSm[k]);
-    float ap = (fabsf(o->pSm[k]) - 0.4f) / 0.6f;
-    ap = ap < 0 ? 0 : ap > 1 ? 1 : ap;
+    float pl = pll[k - 1] + pll[k] + pll[k + 1], prv = prr[k - 1] + prr[k] + prr[k + 1];
+    float cr = pre[k - 1] + pre[k] + pre[k + 1], ci = pim[k - 1] + pim[k] + pim[k + 1];
+    float c2 = cr * cr + ci * ci;
+    float pp2 = pl * prv;
+    float coh2 = fminf(c2 / (pp2 + eps), 1.0f);
+    float prod = sqrtf(pp2) + eps;
+    float bal = 2 * prod / (pl + prv + 2 * eps);
+    float pan = (pl - prv) / (pl + prv + eps);
+    float inphase = fmaxf(cr, 0.0f) / (sqrtf(c2) + eps);
+    float ps = o->pSm[k] + 0.25f * (pan - o->pSm[k]);
+    o->pSm[k] = ps;
+    float ap = fminf(fmaxf((fabsf(ps) - 0.4f) / 0.6f, 0.0f), 1.0f);
     float sp = sidePan * ap * ap * (3 - 2 * ap);   /* smoothstep: only clearly panned sources move */
-    float spL = o->pSm[k] > 0 ? sp : 0, spR = o->pSm[k] < 0 ? sp : 0;
-    float wc = 1.0f - 1.25f * fabsf(pan); if (wc < 0) wc = 0;
-    float w = cMax * wc * wc * coh * coh * inphase;
-    float amb = (1 - coh * coh) * bal;
-    if (k < kLow) { w = 0; amb = 0; spL = spR = 0; }
+    float lowk = k < kLow ? 0.0f : 1.0f;
+    float spL = ps > 0 ? sp : 0, spR = ps < 0 ? sp : 0;
+    spL *= lowk; spR *= lowk;
+    float wc = fmaxf(1.0f - 1.25f * fabsf(pan), 0.0f);
+    float w = cMax * wc * wc * coh2 * inphase * lowk;
+    float amb = (1 - coh2) * bal * lowk;
     /* temporal smoothing of the masks themselves (~50 ms): no warbling on pumped material */
-    o->wSm[k] += 0.25f * (w - o->wSm[k]);
-    o->aSm[k] += 0.25f * (amb - o->aSm[k]);
-    w = o->wSm[k]; amb = o->aSm[k];
+    w = o->wSm[k] + 0.25f * (w - o->wSm[k]); o->wSm[k] = w;
+    amb = o->aSm[k] + 0.25f * (amb - o->aSm[k]); o->aSm[k] = amb;
     float rest = sqrtf(1 - w);
     float gF = rest * sqrtf(1 - kk * amb);
     float sa = rest * sqrtf(amb);
-    float gS = sa * ks, gR = sa * kr;
-    float gFL = gF * sqrtf(1 - spL), gFR = gF * sqrtf(1 - spR);
-    float gSL = sqrtf(gS * gS + gF * gF * spL), gSR = sqrtf(gS * gS + gF * gF * spR);
-    float gC = sqrtf(w) * 0.70710678f;
-    float ar, ai, br, bi;
-    bin_at(o->XL, k, &ar, &ai);
-    bin_at(o->XR, k, &br, &bi);
-    int ir = k == 0 ? 0 : k == B ? 1 : 2 * k, ii = (k == 0 || k == B) ? -1 : 2 * k + 1;
-    o->Y[S_FL][ir] = gFL * ar; o->Y[S_FR][ir] = gFR * br; o->Y[S_C][ir] = gC * (ar + br);
-    o->Y[S_SL][ir] = gSL * ar; o->Y[S_SR][ir] = gSR * br;
-    o->Y[S_BL][ir] = gR * ar; o->Y[S_BR][ir] = gR * br;
-    if (ii >= 0) {
-      o->Y[S_FL][ii] = gFL * ai; o->Y[S_FR][ii] = gFR * bi; o->Y[S_C][ii] = gC * (ai + bi);
-      o->Y[S_SL][ii] = gSL * ai; o->Y[S_SR][ii] = gSR * bi;
-      o->Y[S_BL][ii] = gR * ai; o->Y[S_BR][ii] = gR * bi;
+    float gS = sa * ks;
+    o->gm[0][k] = gF * sqrtf(1 - spL);
+    o->gm[1][k] = gF * sqrtf(1 - spR);
+    o->gm[2][k] = sqrtf(w) * 0.70710678f;
+    o->gm[3][k] = sqrtf(gS * gS + gF * gF * spL);
+    o->gm[4][k] = sqrtf(gS * gS + gF * gF * spR);
+    o->gm[5][k] = sa * kr;
+  }
+#ifdef OWN3D_PROFILE
+  own3d_prof[7] += (double)(own3d_now_ns() - q0);
+#endif
+  {
+    float *const *Y = o->Y;
+    const float *XL = o->XL, *XR = o->XR;
+    /* DC and Nyquist (packed in [0], [1]) */
+    for (int j = 0; j < 2; j++) {
+      int k = j == 0 ? 0 : B;
+      Y[S_FL][j] = o->gm[0][k] * XL[j]; Y[S_FR][j] = o->gm[1][k] * XR[j]; Y[S_C][j] = o->gm[2][k] * (XL[j] + XR[j]);
+      Y[S_SL][j] = o->gm[3][k] * XL[j]; Y[S_SR][j] = o->gm[4][k] * XR[j];
+      Y[S_BL][j] = o->gm[5][k] * XL[j]; Y[S_BR][j] = o->gm[5][k] * XR[j];
+    }
+    for (int i = 2; i < N; i++) {
+      int k = i >> 1;
+      float a = XL[i], b = XR[i];
+      Y[S_FL][i] = o->gm[0][k] * a; Y[S_FR][i] = o->gm[1][k] * b; Y[S_C][i] = o->gm[2][k] * (a + b);
+      Y[S_SL][i] = o->gm[3][k] * a; Y[S_SR][i] = o->gm[4][k] * b;
+      Y[S_BL][i] = o->gm[5][k] * a; Y[S_BR][i] = o->gm[5][k] * b;
     }
   }
   const float sc = 1.0f / N;
@@ -562,6 +644,14 @@ static void upmix(Own3D *o, const float *L, const float *R) {
 /* ---------------- binaural convolution ---------------- */
 static void push_inputs(Own3D *o) {
   for (int s = 0; s < NS; s++) {
+    if (o->spkGain[s] == 0.0f && o->spkG0[s] == 0.0f) {   /* muted all block: skip the FFT once the FDL is clear */
+      if (o->spkSilent[s] >= P) continue;
+      o->spkSilent[s]++;
+      memset(o->fdl[s][o->fdlPos], 0, N * sizeof(float));
+      memset(o->xprev[s], 0, B * sizeof(float));
+      continue;
+    }
+    o->spkSilent[s] = 0;
     memcpy(o->tbuf, o->xprev[s], B * sizeof(float));
     memcpy(o->tbuf + B, o->spk[s], B * sizeof(float));
     memcpy(o->xprev[s], o->spk[s], B * sizeof(float));
@@ -571,9 +661,11 @@ static void push_inputs(Own3D *o) {
 static void convolve(Own3D *o, const Bank *bk, float out[2][B]) {
   for (int e = 0; e < 2; e++) {
     memset(o->acc[e], 0, N * sizeof(float));
-    for (int s = 0; s < NS; s++)
+    for (int s = 0; s < NS; s++) {
+      if (o->spkGain[s] == 0.0f && o->spkSilent[s] >= P) continue;   /* muted and its history is empty */
       for (int p = 0; p < P; p++)
-        pffft_zconvolve_accumulate(o->fft, o->fdl[s][(o->fdlPos - p + P) % P], bk->H[s][e][p], o->acc[e], 1.0f / N);
+        if (bk->nz[s][e][p]) pffft_zconvolve_accumulate(o->fft, o->fdl[s][(o->fdlPos - p + P) % P], bk->H[s][e][p], o->acc[e], 1.0f / N);
+    }
     pffft_transform(o->fft, o->acc[e], o->tbuf, o->work, PFFFT_BACKWARD);
     memcpy(out[e], o->tbuf + B, B * sizeof(float));   /* overlap-save: second half is valid */
   }
@@ -589,6 +681,12 @@ static void apply_live(Own3D *o) {
       bq_shelf(&o->tone[c][0], p[P_LS_F], p[P_LS_DB], 0);
       bq_shelf(&o->tone[c][1], p[P_HS_F], p[P_HS_DB], 1);
       for (int i = 0; i < 5; i++) bq_peak(&o->tone[c][2 + i], EQ_F[i], p[P_EQ1 + i], 1.0);
+    }
+    for (int k = 0; k < 7; k++) {
+      float gdb = k == 0 ? p[P_LS_DB] : k == 1 ? p[P_HS_DB] : p[P_EQ1 + k - 2];
+      int on = fabsf(gdb) > 0.01f;
+      if (on && !o->toneOn[k]) for (int c = 0; c < 2; c++) o->tone[c][k].z1 = o->tone[c][k].z2 = 0;
+      o->toneOn[k] = on;   /* a 0 dB section is an identity: skip it */
     }
   }
   if (p[P_XOVER] != o->xoverHz) {
@@ -632,7 +730,7 @@ static void render_block(Own3D *o, int16_t *out) {
     float g = (pp[SP(s, K_MUTE)] > 0.5f || (anySolo && pp[SP(s, K_SOLO)] < 0.5f)) ? 0.0f : db2a(pp[SP(s, K_LEVEL)]);
     float g0 = o->spkGain[s];
     for (int i = 0; i < B; i++) o->spk[s][i] *= g0 + (g - g0) * (float)i / B;
-    o->spkGain[s] = g;
+    o->spkGain[s] = g; o->spkG0[s] = g0;
   }
   push_inputs(o);
   PT(2);
@@ -658,9 +756,18 @@ static void render_block(Own3D *o, int16_t *out) {
   double em = 0, es = 0;
   for (int i = 0; i < B; i++) {
     float rl, rr;
-    fdn_tick(&o->fdn, fb->fdnG, fb->fdnDamp, fb->preDelay,
-             o->spk[S_FL][i] + 0.7f * o->spk[S_C][i] + o->spk[S_SL][i] + o->spk[S_BL][i],
-             o->spk[S_FR][i] + 0.7f * o->spk[S_C][i] + o->spk[S_SR][i] + o->spk[S_BR][i], &rl, &rr);
+    {
+      Fdn *f = &o->fdn;
+      float xl = o->spk[S_FL][i] + 0.7f * o->spk[S_C][i] + o->spk[S_SL][i] + o->spk[S_BL][i];
+      float xr = o->spk[S_FR][i] + 0.7f * o->spk[S_C][i] + o->spk[S_SR][i] + o->spk[S_BR][i];
+      if (f->phase == 0) { f->dIn[0] = xl; f->dIn[1] = xr; rl = 0.5f * (f->yPrev[0] + f->yCur[0]); rr = 0.5f * (f->yPrev[1] + f->yCur[1]); }
+      else {
+        f->yPrev[0] = f->yCur[0]; f->yPrev[1] = f->yCur[1];
+        fdn_tick(f, fb->fdnG, fb->fdnDamp, fb->preDelay, 0.5f * (f->dIn[0] + xl), 0.5f * (f->dIn[1] + xr), &f->yCur[0], &f->yCur[1]);
+        rl = f->yCur[0]; rr = f->yCur[1];
+      }
+      f->phase ^= 1;
+    }
     float t = bn ? (i + 0.5f) / B : 0.0f;
     int la = (baseA + i) & (LOW_RING - 1), lb = (baseB + i) & (LOW_RING - 1);
     float dL = o->dryL[la] + t * (o->dryL[lb] - o->dryL[la]), dR = o->dryR[la] + t * (o->dryR[lb] - o->dryR[la]);
@@ -699,7 +806,7 @@ static void render_block(Own3D *o, int16_t *out) {
     float kl = bq(&o->kOutL[1], bq(&o->kOutL[0], yl));
     float kr = bq(&o->kOutR[1], bq(&o->kOutR[0], yr));
     eout += kl * kl + kr * kr;
-    for (int k = 0; k < 7; k++) { yl = bq(&o->tone[0][k], yl); yr = bq(&o->tone[1][k], yr); }
+    for (int k = 0; k < 7; k++) if (o->toneOn[k]) { yl = bq(&o->tone[0][k], yl); yr = bq(&o->tone[1][k], yr); }
     o->ear[0][i] = yl; o->ear[1][i] = yr;
   }
   if (bn) { BARRIER(); o->active = xf; o->pending = -1; }
@@ -728,9 +835,13 @@ static void render_block(Own3D *o, int16_t *out) {
     float l = o->ear[0][i] * g, r = o->ear[1][i] * g;
     float pk = fmaxf(fabsf(l), fabsf(r));
     o->laL[o->laPos] = l; o->laR[o->laPos] = r;
-    o->laT[o->laPos] = pk > LIM_THR ? LIM_THR / pk : 1.0f;
-    float wmin = 1.0f;
-    for (int j = 0; j <= LA; j++) { float tt = o->laT[(o->laPos - j) & (LA_RING - 1)]; if (tt < wmin) wmin = tt; }
+    float tt = pk > LIM_THR ? LIM_THR / pk : 1.0f;
+    /* minimum of the last LA + 1 gain targets: monotonic deque, O(1) per sample */
+    while (o->dqT != o->dqH && o->dqV[(o->dqT - 1) & (LA_RING - 1)] >= tt) o->dqT--;
+    o->dqV[o->dqT & (LA_RING - 1)] = tt; o->dqI[o->dqT & (LA_RING - 1)] = o->laN; o->dqT++;
+    if (o->laN - o->dqI[o->dqH & (LA_RING - 1)] > LA) o->dqH++;
+    o->laN++;
+    float wmin = o->dqV[o->dqH & (LA_RING - 1)];
     if (wmin < o->lim) o->lim += (wmin - o->lim) * att;
     else o->lim += (wmin - o->lim) * rel;
     int op = (o->laPos - LA) & (LA_RING - 1);
@@ -738,6 +849,8 @@ static void render_block(Own3D *o, int16_t *out) {
     o->laPos = (o->laPos + 1) & (LA_RING - 1);
     if (fabsf(ol) > 0.95f) ol = copysignf(0.95f + 0.05f * tanhf((fabsf(ol) - 0.95f) / 0.05f), ol);
     if (fabsf(orr) > 0.95f) orr = copysignf(0.95f + 0.05f * tanhf((fabsf(orr) - 0.95f) / 0.05f), orr);
+    float ap = fmaxf(fabsf(ol), fabsf(orr));
+    if (ap > o->outPeak) o->outPeak = ap;
     int vl = (int)lrintf(ol * 32767.0f), vr = (int)lrintf(orr * 32767.0f);
     out[2 * i] = (int16_t)(vl > 32767 ? 32767 : vl < -32767 ? -32767 : vl);
     out[2 * i + 1] = (int16_t)(vr > 32767 ? 32767 : vr < -32767 ? -32767 : vr);
@@ -757,7 +870,27 @@ void own3d_process(Own3D *o, const int16_t *in, int16_t *out, int frames, float 
     }
     o->inCount += m;
     if (o->inCount == B) {
-      render_block(o, o->outFifo + 2 * o->outCount);
+      float pk = 0;
+      for (int i = 0; i < B; i++) pk = fmaxf(pk, fmaxf(fabsf(o->inL[i]), fabsf(o->inR[i])));
+      const float thr = 1.0e-4f;   /* -80 dBFS: paused / digital silence */
+      if (pk < thr) o->silentBlocks++; else o->silentBlocks = 0;
+      int hang = 100 + (int)(150 * o->param[P_RT60]);   /* 1 s + 1.5 x RT60 */
+      if (!o->idle && o->silentBlocks > hang && o->outPeak < thr) o->idle = 1;
+      o->outPeak = 0;
+      if (o->idle && pk >= thr) {   /* resume at once: state is silent already; 5 ms input fade-in */
+        o->idle = 0;
+        o->fadeIn = 1;
+      }
+      if (o->idle) {
+        memset(o->outFifo + 2 * o->outCount, 0, (size_t)B * 2 * sizeof(int16_t));
+        o->idleBlocks++;
+      } else {
+        if (o->fadeIn) {
+          for (int i = 0; i < 240; i++) { float g = (i + 0.5f) / 240; o->inL[i] *= g; o->inR[i] *= g; }
+          o->fadeIn = 0;
+        }
+        render_block(o, o->outFifo + 2 * o->outCount);
+      }
       o->outCount += B;
       o->inCount = 0;
     }
@@ -771,10 +904,11 @@ void own3d_process(Own3D *o, const int16_t *in, int16_t *out, int frames, float 
 
 void own3d_reset(Own3D *o) {
   memset(o->histL, 0, sizeof o->histL); memset(o->histR, 0, sizeof o->histR);
-  memset(o->pll, 0, sizeof o->pll); memset(o->prr, 0, sizeof o->prr);
+  memset(o->pll, 0, sizeof o->pll); memset(o->gm, 0, sizeof o->gm); memset(o->prr, 0, sizeof o->prr);
   memset(o->plrRe, 0, sizeof o->plrRe); memset(o->plrIm, 0, sizeof o->plrIm);
   memset(o->wSm, 0, sizeof o->wSm); memset(o->aSm, 0, sizeof o->aSm); memset(o->pSm, 0, sizeof o->pSm);
   memset(o->ola, 0, sizeof o->ola); memset(o->xprev, 0, sizeof o->xprev);
+  memset(o->spkSilent, 0, sizeof o->spkSilent);
   for (int s = 0; s < NS; s++) for (int p = 0; p < P; p++) memset(o->fdl[s][p], 0, N * sizeof(float));
   memset(&o->fdn, 0, sizeof o->fdn);
   for (int k = 0; k < 2; k++) {
@@ -787,12 +921,14 @@ void own3d_reset(Own3D *o) {
   memset(o->dryL, 0, sizeof o->dryL); memset(o->dryR, 0, sizeof o->dryR);
   memset(o->laL, 0, sizeof o->laL); memset(o->laR, 0, sizeof o->laR);
   for (int i = 0; i < LA_RING; i++) o->laT[i] = 1.0f;
+  o->dqH = o->dqT = o->laN = 0;
   o->lim = 1.0f;
   o->msM = o->msS = 0; o->wGain = o->wTarget = 1.0f;
   o->agcBlocks = 0;
   o->Ein = o->Eout = 0;
   o->inCount = 0;
   o->outCount = B;
+  o->silentBlocks = 0; o->idle = 0; o->fadeIn = 0; o->outPeak = 0;
   memset(o->outFifo, 0, sizeof o->outFifo);
 }
 
@@ -879,6 +1015,8 @@ void own3d_set_param(Own3D *o, int id, float v) {
 }
 float own3d_get_param(const Own3D *o, int id) { return id >= 0 && id < NPARAM ? o->param[id] : 0; }
 float own3d_agc_gain(const Own3D *o) { return o->agc; }
+int own3d_idle(const Own3D *o) { return o->idle; }
+long own3d_idle_blocks(const Own3D *o) { return o->idleBlocks; }
 
 double own3d_selftest(Own3D *o, char *report, int report_len, double seconds) {
   if (!o || o->nHrtf == 0) { snprintf(report, report_len, "own3d selftest: no HRTF loaded"); return -1; }
@@ -913,9 +1051,9 @@ double own3d_selftest(Own3D *o, char *report, int report_len, double seconds) {
   double rout = 10 * log10(eout / n / (32768.0 * 32768.0) + 1e-20);
   int hi = (int)o->param[P_HRTF];
   snprintf(report, report_len,
-           "own3d selftest [%s]: %d blocks avg %.3f ms max %.3f ms per 10ms block (%.1f%% of one core), filter rebuild %.1f ms (worker); "
+           "own3d selftest [%s]: %d blocks avg %.3f ms max %.3f ms per 10ms block (%.1f%% of one core), filter rebuild %.1f ms (worker), %d/%d filter partitions; "
            "rms in %.1f dBFS out %.1f dBFS (%+.1f dB), peak %.1f dBFS, clipped %d, agc %.2f",
-           o->hrtf[hi < o->nHrtf ? hi : 0].name, blocks, avgMs, maxNs / 1e6, avgMs * 10.0, rebuildMs,
+           o->hrtf[hi < o->nHrtf ? hi : 0].name, blocks, avgMs, maxNs / 1e6, avgMs * 10.0, rebuildMs, o->bank[o->active].nParts, NS * 2 * P,
            rin, rout, rout - rin, 20 * log10(peak / 32768.0 + 1e-9), clipped, o->agc);
   own3d_reset(o);
   return avgMs;
