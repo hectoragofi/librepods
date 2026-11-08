@@ -77,6 +77,7 @@ class MainActivity: ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        me.kavishdevar.librepods.spatial.SpatialAudioController.get(this).ensureRunningIfEnabled()
 
         setContent {
             val settings by appDataRepository.settings.collectAsState()

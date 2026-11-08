@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "default": "apple-like",
+  "presets": [
+    {"id": "apple-like", "name": "Apple-like", "description": "Balanced default: wide front stage, gentle room.", "params": {}},
+    {"id": "kemar", "name": "Apple-like · KEMAR", "description": "Default tuning with the KEMAR dummy head.", "params": {"hrtf": 1}},
+    {"id": "human-h3", "name": "Apple-like · Human H3", "description": "Default tuning with a measured human head (H3).", "params": {"hrtf": 2}},
+    {"id": "human-h15", "name": "Apple-like · Human H15", "description": "Default tuning with a measured human head (H15).", "params": {"hrtf": 3}},
+    {"id": "bigger-room", "name": "Bigger room", "description": "More space and a longer, brighter tail.", "params": {"room_size": 1.5, "er_db": 0, "late_db": -17, "rt60": 0.45, "predelay_ms": 9}},
+    {"id": "concert-hall", "name": "Concert hall", "description": "Wide stage in a large, reverberant hall.", "params": {"fl_az": 55, "fr_az": -55, "room_size": 2.3, "er_db": -1, "late_db": -13, "rt60": 1.0, "predelay_ms": 18, "damping": 0.6, "ambience": 1.2}},
+    {"id": "club", "name": "Club", "description": "Bass heavy and punchy, little reverb.", "params": {"ls_db": 6, "sub_db": 3, "xover_hz": 120, "eq1_db": 2, "hs_db": 4, "late_db": -26, "er_db": -4}},
+    {"id": "cinema", "name": "Cinema 7.1", "description": "Surrounds pushed out to the sides and back.", "params": {"fl_az": 45, "fr_az": -45, "sl_az": 90, "sr_az": -90, "rl_az": 140, "rr_az": -140, "sl_db": 2, "sr_db": 2, "rl_db": 1, "rr_db": 1, "ambience": 1.3, "room_size": 1.8, "late_db": -16, "rt60": 0.6}},
+    {"id": "height", "name": "Height", "description": "Raised speakers for an Atmos-like dome.", "params": {"fl_el": 15, "fr_el": 15, "c_el": 5, "sl_el": 30, "sr_el": 30, "rl_el": 35, "rr_el": 35}},
+    {"id": "max-immersion", "name": "Max immersion", "description": "Everything wide, decorrelated and enveloping.", "params": {"fl_az": 65, "fr_az": -65, "sl_az": 100, "sr_az": -100, "rl_az": 150, "rr_az": -150, "width": 0.8, "blend": 0.2, "ambience": 1.3, "decorr": 1.6, "sidepan": 1}},
+    {"id": "vocals", "name": "Intimate vocals", "description": "Narrow, dry, centred voice.", "params": {"fl_az": 35, "fr_az": -35, "center": 1, "c_db": 2, "er_db": -6, "late_db": -28, "eq3_db": 1, "eq4_db": 1.5}},
+    {"id": "crisp", "name": "Crisp", "description": "Airy top end, less damping.", "params": {"hs_db": 6, "hs_hz": 10000, "eq5_db": 2, "damping": 0.3}},
+    {"id": "studio", "name": "Studio monitors", "description": "Near-field speakers in a dry control room.", "params": {"fl_az": 30, "fr_az": -30, "fl_dist": 1.2, "fr_dist": 1.2, "c_dist": 1.2, "er_db": -10, "late_db": -30, "blend": 0.2, "sidepan": 0.3, "ambience": 0.7}},
+    {"id": "living-room", "name": "Living room", "description": "Small furnished room with close reflections.", "params": {"fl_az": 40, "fr_az": -40, "er_order": 2, "er_db": 0, "late_db": -15, "rt60": 0.42, "predelay_ms": 2, "room_size": 0.85}},
+    {"id": "dry", "name": "Dry HRTF", "description": "Just the head, no room and no tone shaping.", "params": {"er_db": -30, "late_db": -40, "blend": 0, "width": 0, "ls_db": 0, "hs_db": 0}}
+  ]
+}
