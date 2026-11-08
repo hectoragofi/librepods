@@ -18,6 +18,8 @@
 
 package me.kavishdevar.librepods.billing
 
+import me.kavishdevar.librepods.BuildConfig
+
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -47,7 +49,14 @@ class FOSSBillingProvider(context: Context): BillingProvider {
     private var purchaseJob: Job? = null
 
     init {
-        queryPurchases()
+        // Personal coexist build: the owner already holds the Play premium purchase, which this
+        // package can't query, so premium is always unlocked here.
+        if (BuildConfig.FLAVOR == "coexist") {
+            _isPremium.value = true
+            appDataRepository.updateState { it.copy(isPremium = true) }
+        } else {
+            queryPurchases()
+        }
     }
 
     override fun purchase(activity: Activity) {
