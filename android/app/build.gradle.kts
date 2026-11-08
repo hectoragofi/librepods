@@ -204,6 +204,7 @@ dependencies {
 //    compileOnly(files("../../../framework-classes.jar"))
     implementation(libs.androidx.healthconnect.client)
     implementation(libs.materialKolor.material3)
+    testImplementation(libs.junit)
 }
 
 aboutLibraries {
