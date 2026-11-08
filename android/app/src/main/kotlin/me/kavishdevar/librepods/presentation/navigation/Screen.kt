@@ -139,6 +139,13 @@ sealed interface Screen: NavKey {
         val sessionId: String
     ): Screen
 
+    // Spatial Audio is not a DeviceScreen: it keeps working (and stays open) without AirPods.
+    @Serializable
+    data object SpatialAudio: Screen
+
+    @Serializable
+    data object SpatialAudioApps: Screen
+
     @Serializable
     data object AppAccessibilitySettings: Screen
 

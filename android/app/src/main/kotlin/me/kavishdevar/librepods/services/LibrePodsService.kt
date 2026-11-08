@@ -331,6 +331,7 @@ class LibrePodsService: Service() {
         }
 
         startForegroundNotification()
+        me.kavishdevar.librepods.spatial.SpatialAudioController.get(this).ensureRunningIfEnabled()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

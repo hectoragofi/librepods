@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="spatial_audio">Spatial Audio</string>
+    <string name="spatial_audio_description">Turns stereo music into a room of virtual speakers around your head. Runs on your phone through Shizuku, no root needed.</string>
+    <string name="spatial_edited">edited</string>
+    <string name="spatial_switch_normal">Switch to Normal</string>
+    <string name="spatial_switch_own">Switch to OWN 3D</string>
+    <string name="spatial_turn_off">Turn off</string>
+
+    <string name="spatial_state_off">Off</string>
+    <string name="spatial_state_no_apps">Choose at least one app</string>
+    <string name="spatial_state_no_output">Paused · not playing to AirPods</string>
+    <string name="spatial_state_waiting">Ready · waiting for music</string>
+    <string name="spatial_state_silent">Ready · paused</string>
+    <string name="spatial_state_rendering">Spatializing</string>
+    <string name="spatial_state_error">Something went wrong</string>
+    <string name="spatial_state_shizuku_off">Shizuku is not running</string>
+    <string name="spatial_state_shizuku_permission">Needs Shizuku permission</string>
+    <string name="spatial_state_connecting">Connecting…</string>
+
+    <string name="spatial_mode">Sound</string>
+    <string name="spatial_mode_own">OWN 3D</string>
+    <string name="spatial_mode_normal">Normal</string>
+    <string name="spatial_mode_description">Flip between OWN 3D and plain stereo to compare.</string>
+
+    <string name="spatial_shizuku">Shizuku</string>
+    <string name="spatial_shizuku_not_installed">Not installed</string>
+    <string name="spatial_shizuku_not_installed_help">Spatial Audio needs Shizuku to capture music from other apps. Install it, then start it with Wireless debugging.</string>
+    <string name="spatial_shizuku_install">Get Shizuku</string>
+    <string name="spatial_shizuku_not_running">Not running</string>
+    <string name="spatial_shizuku_not_running_help">Open Shizuku and tap Start (Wireless debugging). It has to be started again after every reboot.</string>
+    <string name="spatial_shizuku_open">Open Shizuku</string>
+    <string name="spatial_shizuku_unsupported">Shizuku is too old. Update it to version 11 or newer.</string>
+    <string name="spatial_shizuku_permission">Permission needed</string>
+    <string name="spatial_shizuku_permission_help">Allow LibrePods to use Shizuku.</string>
+    <string name="spatial_shizuku_grant">Allow</string>
+    <string name="spatial_shizuku_denied_help">Permission was denied. Open Shizuku, find LibrePods under authorized apps and allow it.</string>
+    <string name="spatial_shizuku_ready">Ready</string>
+    <string name="spatial_shizuku_connected">Connected</string>
+
+    <string name="spatial_apps">Apps</string>
+    <string name="spatial_apps_description">Only these apps are spatialized. Capture starts when one of them plays and stops a few seconds after it pauses.</string>
+    <string name="spatial_apps_none">None selected</string>
+    <string name="spatial_apps_show_all">Show all apps</string>
+    <string name="spatial_now_playing">Now playing</string>
+    <string name="spatial_nothing_playing">Nothing</string>
+
+    <string name="spatial_presets">Presets</string>
+    <string name="spatial_my_presets">My presets</string>
+    <string name="spatial_save_preset">Save as preset…</string>
+    <string name="spatial_save">Save</string>
+    <string name="spatial_cancel">Cancel</string>
+    <string name="spatial_rename">Rename</string>
+    <string name="spatial_delete">Delete</string>
+    <string name="spatial_update_preset">Update with current sound</string>
+    <string name="spatial_preset_name">Preset name</string>
+    <string name="spatial_import">Import…</string>
+    <string name="spatial_export">Copy settings</string>
+    <string name="spatial_copied">Settings copied</string>
+    <string name="spatial_import_hint">Paste settings JSON</string>
+    <string name="spatial_import_invalid">That isn\'t valid preset JSON</string>
+    <string name="spatial_import_apply">Apply</string>
+    <string name="spatial_import_save_as">Also save as preset (optional name)</string>
+    <string name="spatial_reset">Reset to default</string>
+
+    <string name="spatial_speakers">Speakers</string>
+    <string name="spatial_speakers_description">Drag a speaker to move it. Tap it for more.</string>
+    <string name="spatial_azimuth">Direction</string>
+    <string name="spatial_elevation">Height</string>
+    <string name="spatial_distance">Distance</string>
+    <string name="spatial_level">Level</string>
+    <string name="spatial_mute">Mute</string>
+    <string name="spatial_solo">Solo</string>
+    <string name="spatial_direct">Direct (no head filter)</string>
+    <string name="spatial_sub_band">Sub band</string>
+    <string name="spatial_sub_description">Low bass below the crossover, kept out of the head filter.</string>
+
+    <string name="spatial_advanced">Advanced</string>
+    <string name="spatial_group_upmix">Upmix</string>
+    <string name="spatial_group_tone">Tone</string>
+    <string name="spatial_group_room">Room</string>
+    <string name="spatial_group_global">Global</string>
+    <string name="spatial_group_head">Head</string>
+    <string name="spatial_diagnostics">Show diagnostics</string>
+    <string name="spatial_diagnostics_description">Renderer status, CPU use and log. Leave off for everyday use.</string>
+    <string name="spatial_cpu">CPU</string>
+    <string name="spatial_self_test">Run self-test</string>
+    <string name="spatial_unavailable">The spatial renderer could not be loaded on this device.</string>
+</resources>

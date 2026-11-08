@@ -55,3 +55,6 @@ target_link_libraries(fluoride_hooks
         android
         log
 )
+
+# OWN 3D spatial audio renderer (self-contained, see own3d/CMakeLists.txt)
+add_subdirectory(own3d)

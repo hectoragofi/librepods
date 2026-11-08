@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
         tools:ignore="ForegroundServicesPolicy" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -150,6 +152,24 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+        <!-- Spatial Audio: foreground anchor that keeps the Shizuku user service bound. -->
+        <service
+            android:name=".spatial.SpatialAudioService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <meta-data
+            android:name="moe.shizuku.client.V3_SUPPORT"
+            android:value="true" />
+
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <receiver
             android:name=".receivers.BootReceiver"
             android:enabled="true"
@@ -193,5 +213,21 @@
     </application>
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <!-- Spatial Audio: Shizuku and the media apps that can be spatialized. -->
+        <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="com.apple.android.music" />
+        <package android:name="com.spotify.music" />
+        <package android:name="org.videolan.vlc" />
+        <package android:name="com.google.android.apps.youtube.music" />
+        <intent>
+            <action android:name="android.media.browse.MediaBrowserService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MEDIA_BUTTON" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 </manifest>

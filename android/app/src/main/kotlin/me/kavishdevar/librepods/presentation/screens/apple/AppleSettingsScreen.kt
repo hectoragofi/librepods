@@ -111,7 +111,8 @@ fun AppleSettingsRoute(
     navigateToDebugScreen: () -> Unit,
     navigateToHeartRateScreen: () -> Unit,
     navigateToOverlaySettings: () -> Unit,
-    navigateToProxConnectSettings: () -> Unit
+    navigateToProxConnectSettings: () -> Unit,
+    navigateToSpatialAudio: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -147,7 +148,8 @@ fun AppleSettingsRoute(
         navigateToHeartRateScreen = navigateToHeartRateScreen,
         navigateToDebugScreen = navigateToDebugScreen,
         navigateToOverlaySettings = navigateToOverlaySettings,
-        navigateToProxConnectSettings = navigateToProxConnectSettings
+        navigateToProxConnectSettings = navigateToProxConnectSettings,
+        navigateToSpatialAudio = navigateToSpatialAudio
     )
 }
 
@@ -187,7 +189,8 @@ fun AppleSettingsScreen(
     navigateToHeartRateScreen: () -> Unit,
     navigateToDebugScreen: () -> Unit,
     navigateToOverlaySettings: () -> Unit,
-    navigateToProxConnectSettings: () -> Unit
+    navigateToProxConnectSettings: () -> Unit,
+    navigateToSpatialAudio: () -> Unit = {}
 ) {
     val state = uiState.state
     val settings = uiState.settings
@@ -382,6 +385,20 @@ fun AppleSettingsScreen(
                         orientation = if (showAlertDisabledMessage) StyledListItemOrientation.Vertical else StyledListItemOrientation.Horizontal
                     )
                 }
+            }
+
+            item(key = "spacer_spatial_audio") {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            item(key = "spatial_audio") {
+                val spatialContext = androidx.compose.ui.platform.LocalContext.current
+                val spatial = remember { me.kavishdevar.librepods.spatial.SpatialAudioController.get(spatialContext) }
+                val spatialOn by spatial.enabled.collectAsState()
+                StyledListItem(
+                    contentText = stringResource(R.string.spatial_audio),
+                    onClick = navigateToSpatialAudio,
+                    supportingText = if (spatialOn) spatial.currentPreset().name else null,
+                )
             }
 
             if (baseCapabilities.contains(BaseCapability.STEM_CONFIG)) {
