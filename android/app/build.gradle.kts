@@ -137,6 +137,7 @@ android {
         compose = true
         viewBinding = true
         buildConfig = true
+        aidl = true
     }
     androidResources {
         generateLocaleConfig = true
@@ -200,6 +201,9 @@ dependencies {
     implementation(libs.androidx.room3.runtime)
     ksp(libs.androidx.room3.compiler)
     implementation(libs.kotlinx.serialization.cbor)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
     implementation(libs.protobuf.kotlin)
 //    compileOnly(files("../../../framework-classes.jar"))
     implementation(libs.androidx.healthconnect.client)

@@ -21,3 +21,9 @@
 #-renamesourcefileattribute SourceFile
 
 -keep class me.kavishdevar.librepods.utils.KotlinModule { *; }
+
+# Spatial Audio: JNI bridge (names fixed by own3d_jni.c) and the Shizuku user service, which
+# Shizuku instantiates by class name in the shell process.
+-keep class local.librepods.spatialshizuku.Own3D { *; }
+-keep class local.librepods.spatialshizuku.Own3D$Param { *; }
+-keep class me.kavishdevar.librepods.spatial.shell.SpatialShellService { *; }

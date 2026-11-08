@@ -33,8 +33,12 @@ healthConnect = "1.2.0-alpha06"
 foundationLayout = "1.12.1"
 ktxSerialization = "1.11.0"
 materialKolor = "6.0.0"
+shizuku = "13.1.5"
 
 [libraries]
+shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
+shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "ktxSerialization" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 accompanist-permissions = { module = "com.google.accompanist:accompanist-permissions", version.ref = "accompanistPermissions" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
