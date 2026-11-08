@@ -335,6 +335,7 @@ class SpatialAudioController private constructor(private val context: Context) {
     }
 
     fun refreshShizuku() {
+        val before = _shizuku.value
         _shizuku.value = when {
             service != null -> ShizukuState.CONNECTED
             !Shizuku.pingBinder() -> if (isShizukuInstalled()) ShizukuState.NOT_RUNNING else ShizukuState.NOT_INSTALLED
@@ -343,6 +344,7 @@ class SpatialAudioController private constructor(private val context: Context) {
             Shizuku.shouldShowRequestPermissionRationale() -> ShizukuState.DENIED
             else -> ShizukuState.NO_PERMISSION
         }
+        if (_shizuku.value != before) SpatialAudioService.refreshNotification(context)
     }
 
     fun isShizukuInstalled(): Boolean = try {

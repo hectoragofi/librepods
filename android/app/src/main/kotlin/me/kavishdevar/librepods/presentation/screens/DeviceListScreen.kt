@@ -90,7 +90,8 @@ fun DeviceListScreen(
     devices: Map<MacAddress, Device<*, *, *>>,
     navigateToAppSettings: () -> Unit,
     navigateToDevice: (MacAddress) -> Unit,
-    navigateToHeartRateScreen: (MacAddress) -> Unit
+    navigateToHeartRateScreen: (MacAddress) -> Unit,
+    navigateToSpatialAudio: () -> Unit = {}
 ) {
     val design = LocalDesign.current
     val scrollState = rememberScrollState()
@@ -577,6 +578,19 @@ fun DeviceListScreen(
                         }
                     }
                 }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            val spatialContext = androidx.compose.ui.platform.LocalContext.current
+            val spatial = remember { me.kavishdevar.librepods.spatial.SpatialAudioController.get(spatialContext) }
+            val spatialOn by spatial.enabled.collectAsState()
+            StyledList {
+                styledListItem(
+                    contentText = stringResource(R.string.spatial_audio),
+                    supportingText = if (spatialOn) spatial.currentPreset().name else stringResource(R.string.spatial_state_off),
+                    onClick = navigateToSpatialAudio,
+                    orientation = StyledListItemOrientation.Vertical,
+                )
             }
 
             Spacer(modifier = Modifier.padding(top = bottomPadding))

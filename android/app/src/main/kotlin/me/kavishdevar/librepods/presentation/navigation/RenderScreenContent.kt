@@ -39,6 +39,8 @@ import me.kavishdevar.librepods.presentation.screens.apple.TransparencySettingsS
 import me.kavishdevar.librepods.presentation.screens.apple.UpdateHearingTestRoute
 import me.kavishdevar.librepods.presentation.screens.apple.VersionScreen
 import me.kavishdevar.librepods.presentation.screens.onboarding.OnboardingScreen
+import me.kavishdevar.librepods.presentation.screens.spatial.SpatialAudioAppsRoute
+import me.kavishdevar.librepods.presentation.screens.spatial.SpatialAudioRoute
 import me.kavishdevar.librepods.presentation.screens.workout.HeartRateSharingRoute
 import me.kavishdevar.librepods.presentation.screens.workout.WorkoutDetailRoute
 import me.kavishdevar.librepods.presentation.screens.workout.WorkoutHistoryRoute
@@ -128,7 +130,8 @@ fun RenderScreenContent(
                         is AppleDevice -> navigate(Screen.HeartRate(macAddress))
                         else -> {}
                     }
-                }
+                },
+                navigateToSpatialAudio = { navigate(Screen.SpatialAudio) }
             )
         }
 
@@ -160,6 +163,7 @@ fun RenderScreenContent(
                 navigateToMicrophoneSettings = { navigate(Screen.MicrophoneSettings(screen.macAddress)) },
                 navigateToRecordingScreen = { navigate(Screen.Recording(screen.macAddress)) },
                 navigateToHeartRateScreen = { navigate(Screen.HeartRate(screen.macAddress)) },
+                navigateToSpatialAudio = { navigate(Screen.SpatialAudio) },
                 navigateToDebugScreen = { navigate(Screen.Debug(screen.macAddress)) },
                 navigateToOverlaySettings = { navigate(Screen.OverlaySettings(screen.macAddress)) },
                 navigateToProxConnectSettings = { navigate(Screen.ProxConnectSettings(screen.macAddress)) }
@@ -451,6 +455,17 @@ fun RenderScreenContent(
                 navigateToWorkout = { navigate(Screen.Workout) },
                 navigateToSharing = { navigate(Screen.HeartRateSharing) }
             )
+        }
+
+        Screen.SpatialAudio -> {
+            SpatialAudioRoute(
+                navigateBack = navigateBack,
+                navigateToApps = { navigate(Screen.SpatialAudioApps) }
+            )
+        }
+
+        Screen.SpatialAudioApps -> {
+            SpatialAudioAppsRoute(navigateBack = navigateBack)
         }
 
         Screen.Workout -> {

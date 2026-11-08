@@ -328,6 +328,7 @@ class SpatialShellService() : ISpatialService.Stub() {
     private val engineListener = object : CaptureEngine.Listener {
         override fun onSilenceChanged(silent: Boolean) {
             handler.post {
+                if (engine == null) return@post
                 this@SpatialShellService.silent = silent
                 evaluate()
             }
