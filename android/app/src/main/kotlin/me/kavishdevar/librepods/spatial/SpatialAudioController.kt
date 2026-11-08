@@ -270,8 +270,14 @@ class SpatialAudioController private constructor(private val context: Context) {
 
     private val callback = object : ISpatialCallback.Stub() {
         override fun onStatus(json: String?) {
-            val s = SpatialStatus.fromJson(json ?: return)
+            val raw = SpatialStatus.fromJson(json ?: return)
+            // Without diagnostics the UI only needs coarse state; dropping the per-push meters
+            // (cpu, peak, agc, log) lets equal states dedupe so the screen doesn't recompose
+            // (and redraw its blur backdrop) on every status push.
+            val s = if (_diagnostics.value) raw
+            else raw.copy(cpuMs = -1.0, cpuMaxMs = -1.0, peak = 0, agc = 0f, log = null)
             main.post {
+                if (s == _status.value) return@post
                 val changed = s.state != _status.value.state
                 _status.value = s
                 if (changed) SpatialAudioService.refreshNotification(context)
