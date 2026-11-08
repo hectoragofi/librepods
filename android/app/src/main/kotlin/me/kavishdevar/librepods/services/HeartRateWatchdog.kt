@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -43,6 +44,7 @@ import me.kavishdevar.librepods.core.devices.AppleDevice
 import me.kavishdevar.librepods.core.devices.ComponentStatus
 import me.kavishdevar.librepods.core.devices.ConnectionState
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 enum class HeartRateRecoveryStatus {
@@ -94,6 +96,7 @@ class HeartRateWatchdog(
     @Volatile private var rebuildInFlight = false
 
     private var job: Job? = null
+    private var lastSupervisedConnection = -1
 
     fun start() {
         if (job?.isActive == true) return
@@ -114,6 +117,9 @@ class HeartRateWatchdog(
                 Gate(enabled, connection, number, isWorn, retry)
             }
                 .distinctUntilChanged()
+                // connect() emits CONNECTING, CONNECTED and a new connection number in quick
+                // succession; settle so one reconnect is seen as one gate change.
+                .debounce(GATE_SETTLE)
                 .collectLatest { gate ->
                     when {
                         !gate.enabled -> {
@@ -124,7 +130,7 @@ class HeartRateWatchdog(
                             if (!rebuildInFlight) setStatus(HeartRateRecoveryStatus.WAITING_FOR_AIRPODS)
                         }
                         !gate.worn -> setStatus(HeartRateRecoveryStatus.NOT_WORN)
-                        else -> supervise()
+                        else -> supervise(gate.connectionNumber)
                     }
                 }
         }
@@ -141,14 +147,15 @@ class HeartRateWatchdog(
         retryRequests.update { it + 1 }
     }
 
-    private suspend fun supervise() {
+    private suspend fun supervise(connectionNumber: Int) {
         if (rebuildInFlight) {
             // This is the reconnect our own rebuild produced; keep rebuildUsed so we only rebuild once.
             rebuildInFlight = false
-        } else if (_status.value == HeartRateRecoveryStatus.WAITING_FOR_AIRPODS) {
-            // A fresh connection (e.g. after a Bluetooth toggle) starts a new failure episode.
+        } else if (connectionNumber != lastSupervisedConnection) {
+            // Any other new connection (e.g. after a Bluetooth toggle) starts a new failure episode.
             rebuildUsed = false
         }
+        lastSupervisedConnection = connectionNumber
 
         setStatus(HeartRateRecoveryStatus.STARTING)
         if (device.state.value.hrmState == BuddyState.INACTIVE) {
@@ -197,8 +204,9 @@ class HeartRateWatchdog(
                     }
                     Log.i(TAG, "AACP rebuild for heart-rate finished connected=$connected")
                     if (!connected) {
+                        // AirPods unreachable; the next normal reconnect resumes monitoring.
                         rebuildInFlight = false
-                        setStatus(HeartRateRecoveryStatus.FAILED)
+                        setStatus(HeartRateRecoveryStatus.WAITING_FOR_AIRPODS)
                     }
                 }
             } else {
@@ -234,6 +242,7 @@ class HeartRateWatchdog(
         val STALL_TIMEOUT = 10.seconds
         val INIT_SETTLE = 4.seconds
         val REBUILD_SETTLE = 3.seconds
+        val GATE_SETTLE = 500.milliseconds
     }
 }
 
