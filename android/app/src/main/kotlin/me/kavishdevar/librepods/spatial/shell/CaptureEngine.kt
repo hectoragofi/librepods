@@ -87,6 +87,14 @@ internal class CaptureEngine(
         call(rb, "addMixRule", addRule, rule.getField("RULE_MATCH_ATTRIBUTE_USAGE").getInt(null), attrs)
         val uidRule = rule.getField("RULE_MATCH_UID").getInt(null)
         for (uid in uids) call(rb, "addMixRule", addRule, uidRule, Integer.valueOf(uid))
+        // Apps with android:allowAudioPlaybackCapture="false" (e.g. SoundCloud) still permit
+        // capture by holders of CAPTURE_AUDIO_OUTPUT, which shell has; opt in to that.
+        // Apps using setAllowedCapturePolicy(ALLOW_CAPTURE_BY_NONE) remain uncapturable.
+        try {
+            call(rb, "allowPrivilegedPlaybackCapture", arrayOf(Boolean::class.javaPrimitiveType!!), true)
+        } catch (t: Throwable) {
+            listener.log("allowPrivilegedPlaybackCapture unavailable: $t")
+        }
         val r = call(rb, "build", arrayOf())
         val stereo = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)

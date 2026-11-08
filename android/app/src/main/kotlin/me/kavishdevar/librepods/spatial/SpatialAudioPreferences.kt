@@ -43,6 +43,7 @@ class SpatialAudioPreferences(private val prefs: SharedPreferences) {
             "com.spotify.music",
             "org.videolan.vlc",
             "com.google.android.apps.youtube.music",
+            "com.soundcloud.android",
         )
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MODE = "mode"
