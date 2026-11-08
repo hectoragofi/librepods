@@ -122,6 +122,12 @@ class LibrePodsService: Service() {
         (application as LibrePodsApplication).heartRateRepository
     }
 
+    private val heartRatePreferences by lazy {
+        (application as LibrePodsApplication).heartRatePreferences
+    }
+
+    private val heartRateWatchdogs = mutableMapOf<MacAddress, HeartRateWatchdog>()
+
 
     private val bleManager by lazy {
         BLEManager(
@@ -340,6 +346,13 @@ class LibrePodsService: Service() {
     }
 
     override fun onDestroy() {
+        synchronized(heartRateWatchdogs) {
+            heartRateWatchdogs.forEach { (mac, watchdog) ->
+                watchdog.stop()
+                HeartRateWatchdogs.unregister(mac)
+            }
+            heartRateWatchdogs.clear()
+        }
         unregisterBluetoothReceivers()
         bleManager.stop()
         serviceCoroutineScope.cancel("Service stopped")
@@ -556,6 +569,7 @@ class LibrePodsService: Service() {
                 }
 
                 observeAppleState(device)
+                startHeartRateWatchdog(device)
                 observeAppleSettings(device)
                 observeAppleMetadata(device)
                 observeAppleMicrophoneFrames(device)
@@ -886,6 +900,20 @@ class LibrePodsService: Service() {
                 previousState = state
             }
         }
+    }
+
+    private fun startHeartRateWatchdog(device: AppleDevice) {
+        val watchdog = synchronized(heartRateWatchdogs) {
+            heartRateWatchdogs.getOrPut(device.macAddress) {
+                HeartRateWatchdog(
+                    device = device,
+                    scope = serviceCoroutineScope,
+                    monitoringEnabled = heartRatePreferences.monitoringEnabled
+                )
+            }
+        }
+        HeartRateWatchdogs.register(device.macAddress, watchdog)
+        watchdog.start()
     }
 
     fun observeAppleSettings(device: AppleDevice) {

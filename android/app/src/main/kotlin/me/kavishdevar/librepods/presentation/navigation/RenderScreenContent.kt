@@ -442,6 +442,7 @@ fun RenderScreenContent(
             )
             HeartRateRoute(
                 viewModel = appleViewModel,
+                macAddress = screen.macAddress,
                 navigateBack = navigateBack
             )
         }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import me.kavishdevar.librepods.billing.BillingManager
 import me.kavishdevar.librepods.billing.BillingProviderFactory
 import me.kavishdevar.librepods.core.utils.GestureFeedback
+import me.kavishdevar.librepods.data.heartrate.HeartRatePreferences
 import me.kavishdevar.librepods.database.LibrePodsDatabase
 import me.kavishdevar.librepods.presentation.overlays.IslandWindow
 import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
@@ -39,6 +40,10 @@ class LibrePodsApplication: Application(), XposedServiceHelper.OnServiceListener
 
     val recordingRepository by lazy { RecordingRepository(applicationContext) }
     val heartRateRepository by lazy { HeartRateRepository(database.heartRateDao()) }
+
+    val heartRatePreferences by lazy {
+        HeartRatePreferences(getSharedPreferences(HeartRatePreferences.PREFERENCES_NAME, MODE_PRIVATE))
+    }
 
     val healthConnectClient: HealthConnectClient? by lazy {
         val status = HealthConnectClient.getSdkStatus(this)

@@ -461,4 +461,11 @@
     <string name="prox_connect_settings">Configure automatic connections</string>
     <string name="require_both_buds_in_case">Require both AirPods in case to show</string>
     <string name="show_close_button">Show close button</string>
+    <!-- Heart-rate recovery -->
+    <string name="heart_rate_recovery_retrying">No reading yet, asking the AirPods again…</string>
+    <string name="heart_rate_recovery_rebuilding">Reconnecting to the AirPods to restore heart rate…</string>
+    <string name="heart_rate_recovery_failed">Heart rate could not start</string>
+    <string name="heart_rate_recovery_tap_to_retry">Tap to retry. Make sure at least one AirPod is in your ear.</string>
+    <string name="heart_rate_recovery_not_worn">Put in an AirPod to measure heart rate</string>
+    <string name="heart_rate_recovery_waiting_for_airpods">Heart rate will resume when your AirPods reconnect</string>
 </resources>

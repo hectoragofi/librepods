@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.kavishdevar.librepods.core.bluetooth.MacAddress
 import me.kavishdevar.librepods.core.bluetooth.aacp.AACPManager
 import me.kavishdevar.librepods.core.bluetooth.aacp.rtbuddy.proto.SensorServiceType
@@ -189,6 +190,19 @@ class AppleDevice(
         _connectionState.update {
             ConnectionState.DISCONNECTED
         }
+    }
+
+    /**
+     * Tears down only the AACP L2CAP socket (audio profiles stay connected), waits for the
+     * accessory to settle, then reconnects and re-runs the AACP init sequence. Used for
+     * heart-rate recovery: after a Bluetooth toggle the first socket can come back unable to
+     * stream sensor data until it is rebuilt.
+     */
+    suspend fun rebuildAacpTransport(settle: Duration = 3.seconds): Boolean {
+        Log.i(TAG, "rebuilding AACP transport, waiting ${settle.inWholeMilliseconds}ms before reconnect")
+        aacp.disconnect()
+        delay(settle)
+        return withContext(Dispatchers.IO) { connect() }
     }
 
     fun setControlCommand(identifier: ControlCommandIdentifier, value: ByteArray): Boolean = aacp.sendControlCommand(identifier.value, value)
