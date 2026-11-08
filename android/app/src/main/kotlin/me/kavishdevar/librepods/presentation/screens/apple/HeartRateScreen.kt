@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -47,7 +48,11 @@ import androidx.health.connect.client.records.HeartRateRecord
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.flow.debounce
+import me.kavishdevar.librepods.LibrePodsApplication
 import me.kavishdevar.librepods.R
+import me.kavishdevar.librepods.core.bluetooth.MacAddress
+import me.kavishdevar.librepods.services.HeartRateRecoveryStatus
+import me.kavishdevar.librepods.services.HeartRateWatchdogs
 import me.kavishdevar.librepods.core.data.apple.BuddyState
 import me.kavishdevar.librepods.core.devices.AppleSettings
 import me.kavishdevar.librepods.presentation.components.primitives.StyledIconButton
@@ -70,15 +75,33 @@ import kotlin.time.Duration.Companion.milliseconds
 @Composable
 fun HeartRateRoute(
     viewModel: AppleViewModel,
-    navigateBack: (() -> Unit)?
+    macAddress: MacAddress,
+    navigateBack: (() -> Unit)?,
+    navigateToWorkout: () -> Unit = {},
+    navigateToSharing: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val app = LocalContext.current.applicationContext as LibrePodsApplication
+    val heartRatePreferences = app.heartRatePreferences
+    val recoveryStatus by remember(macAddress) { HeartRateWatchdogs.status(macAddress) }
+        .collectAsState(initial = HeartRateRecoveryStatus.OFF)
 
     HeartRateScreen(
         uiState = uiState,
         navigateBack = navigateBack,
-        startHr = viewModel::startHr,
-        stopHr = viewModel::stopHr,
+        recoveryStatus = recoveryStatus,
+        startHr = {
+            // Persisted so monitoring resumes (and is recovered) after reconnects.
+            heartRatePreferences.setMonitoringEnabled(true)
+            viewModel.startHr()
+        },
+        stopHr = {
+            heartRatePreferences.setMonitoringEnabled(false)
+            viewModel.stopHr()
+        },
+        retryRecovery = { HeartRateWatchdogs.retry(macAddress) },
+        navigateToWorkout = navigateToWorkout,
+        navigateToSharing = navigateToSharing,
         setHrRange = viewModel::setHrRange,
         updateSettings = viewModel::updateSettings
     )
@@ -88,8 +111,12 @@ fun HeartRateRoute(
 fun HeartRateScreen(
     uiState: AppleUiState,
     navigateBack: (() -> Unit)?,
+    recoveryStatus: HeartRateRecoveryStatus = HeartRateRecoveryStatus.OFF,
     startHr: () -> Unit,
     stopHr: () -> Unit,
+    retryRecovery: () -> Unit = {},
+    navigateToWorkout: () -> Unit = {},
+    navigateToSharing: () -> Unit = {},
     setHrRange: (ClosedRange<Long>) -> Unit,
     updateSettings: (transform: (AppleSettings) -> AppleSettings) -> Unit,
 ) {
@@ -268,6 +295,40 @@ fun HeartRateScreen(
                     }
                 }
             }
+
+            val recoveryText = when (recoveryStatus) {
+                HeartRateRecoveryStatus.RETRYING -> stringResource(R.string.heart_rate_recovery_retrying)
+                HeartRateRecoveryStatus.REBUILDING -> stringResource(R.string.heart_rate_recovery_rebuilding)
+                HeartRateRecoveryStatus.FAILED -> stringResource(R.string.heart_rate_recovery_failed)
+                HeartRateRecoveryStatus.NOT_WORN -> stringResource(R.string.heart_rate_recovery_not_worn)
+                HeartRateRecoveryStatus.WAITING_FOR_AIRPODS -> stringResource(R.string.heart_rate_recovery_waiting_for_airpods)
+                else -> null
+            }
+            AnimatedVisibility(visible = recoveryText != null) {
+                StyledListItem(
+                    contentText = recoveryText.orEmpty(),
+                    onClick = if (recoveryStatus == HeartRateRecoveryStatus.FAILED) retryRecovery else null,
+                    supportingText = if (recoveryStatus == HeartRateRecoveryStatus.FAILED) {
+                        stringResource(R.string.heart_rate_recovery_tap_to_retry)
+                    } else null,
+                    orientation = StyledListItemOrientation.Vertical
+                )
+            }
+
+            StyledListItem(
+                contentText = stringResource(R.string.workout),
+                supportingText = stringResource(R.string.workout_entry_description),
+                onClick = navigateToWorkout,
+                index = 0,
+                count = 2,
+            )
+            StyledListItem(
+                contentText = stringResource(R.string.heart_rate_sharing),
+                supportingText = stringResource(R.string.heart_rate_sharing_entry_description),
+                onClick = navigateToSharing,
+                index = 1,
+                count = 2,
+            )
 
             AnimatedVisibility(visible = !healthPermissions.status.isGranted) {
                 StyledListItem(

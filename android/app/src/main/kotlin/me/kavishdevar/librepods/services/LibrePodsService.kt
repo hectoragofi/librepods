@@ -8,6 +8,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.appwidget.AppWidgetManager
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanSettings
@@ -43,6 +44,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.kavishdevar.librepods.LibrePodsApplication
@@ -120,6 +125,34 @@ class LibrePodsService: Service() {
 
     private val heartRateRepository by lazy {
         (application as LibrePodsApplication).heartRateRepository
+    }
+
+    private val heartRatePreferences by lazy {
+        (application as LibrePodsApplication).heartRatePreferences
+    }
+
+    private val heartRateWatchdogs = mutableMapOf<MacAddress, HeartRateWatchdog>()
+
+    private val workoutRepository by lazy {
+        (application as LibrePodsApplication).workoutRepository
+    }
+
+    private val heartRateBlePeripheral by lazy {
+        (application as LibrePodsApplication).heartRateBlePeripheral
+    }
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent) {
+            if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+            if (state == BluetoothAdapter.STATE_ON || state == BluetoothAdapter.STATE_OFF) {
+                // The GATT server and advertiser do not survive a radio restart; rebuild them.
+                if (heartRatePreferences.bleSharingEnabled.value) {
+                    heartRateBlePeripheral.stop()
+                    heartRateBlePeripheral.start()
+                }
+            }
+        }
     }
 
 
@@ -269,6 +302,8 @@ class LibrePodsService: Service() {
         observeAppSettings()
 
         registerBluetoothReceivers()
+        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), RECEIVER_NOT_EXPORTED)
+        observeHeartRateBleSharingSetting()
 
         loadDevices()
 
@@ -340,7 +375,19 @@ class LibrePodsService: Service() {
     }
 
     override fun onDestroy() {
+        synchronized(heartRateWatchdogs) {
+            heartRateWatchdogs.forEach { (mac, watchdog) ->
+                watchdog.stop()
+                HeartRateWatchdogs.unregister(mac)
+            }
+            heartRateWatchdogs.clear()
+        }
         unregisterBluetoothReceivers()
+        try {
+            unregisterReceiver(bluetoothStateReceiver)
+        } catch (_: IllegalArgumentException) {
+        }
+        heartRateBlePeripheral.stop()
         bleManager.stop()
         serviceCoroutineScope.cancel("Service stopped")
         super.onDestroy()
@@ -556,6 +603,9 @@ class LibrePodsService: Service() {
                 }
 
                 observeAppleState(device)
+                startHeartRateWatchdog(device)
+                observeHeartRateForWorkouts(device)
+                observeHeartRateForBleSharing(device)
                 observeAppleSettings(device)
                 observeAppleMetadata(device)
                 observeAppleMicrophoneFrames(device)
@@ -886,6 +936,56 @@ class LibrePodsService: Service() {
                 previousState = state
             }
         }
+    }
+
+    /**
+     * Records every new heart-rate reading into the active workout. Runs in the foreground service,
+     * so recording continues with the screen off.
+     */
+    private fun observeHeartRateForWorkouts(device: AppleDevice) {
+        serviceCoroutineScope.launch {
+            workoutRepository.activeSessionId.distinctUntilChanged().collectLatest { sessionId ->
+                if (sessionId == null) return@collectLatest
+                Log.i(TAG, "workout active, recording heart rate from ${device.macAddress.toRedactedString()}")
+                device.state
+                    .map { it.currentHeartRate }
+                    .distinctUntilChanged()
+                    .filterNotNull()
+                    .collect { sample -> workoutRepository.recordValidatedSample(sample) }
+            }
+        }
+    }
+
+    private fun observeHeartRateForBleSharing(device: AppleDevice) {
+        serviceCoroutineScope.launch {
+            device.state
+                .map { it.currentHeartRate }
+                .distinctUntilChanged()
+                .filterNotNull()
+                .collect { sample -> heartRateBlePeripheral.onValidatedSample(sample) }
+        }
+    }
+
+    private fun observeHeartRateBleSharingSetting() {
+        serviceCoroutineScope.launch {
+            heartRatePreferences.bleSharingEnabled.collect { enabled ->
+                heartRateBlePeripheral.setEnabled(enabled)
+            }
+        }
+    }
+
+    private fun startHeartRateWatchdog(device: AppleDevice) {
+        val watchdog = synchronized(heartRateWatchdogs) {
+            heartRateWatchdogs.getOrPut(device.macAddress) {
+                HeartRateWatchdog(
+                    device = device,
+                    scope = serviceCoroutineScope,
+                    monitoringEnabled = heartRatePreferences.monitoringEnabled
+                )
+            }
+        }
+        HeartRateWatchdogs.register(device.macAddress, watchdog)
+        watchdog.start()
     }
 
     fun observeAppleSettings(device: AppleDevice) {

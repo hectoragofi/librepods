@@ -12,11 +12,19 @@ import io.github.libxposed.service.XposedServiceHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import me.kavishdevar.librepods.billing.BillingManager
 import me.kavishdevar.librepods.billing.BillingProviderFactory
 import me.kavishdevar.librepods.core.utils.GestureFeedback
+import me.kavishdevar.librepods.bluetooth.HeartRateBlePeripheral
+import me.kavishdevar.librepods.data.heartrate.HeartRatePreferences
+import me.kavishdevar.librepods.data.workout.RoomWorkoutLocalStore
+import me.kavishdevar.librepods.data.workout.WorkoutDatabase
+import me.kavishdevar.librepods.data.workout.WorkoutPreferences
+import me.kavishdevar.librepods.data.workout.WorkoutRepository
+import me.kavishdevar.librepods.health.workout.AndroidWorkoutHealthConnectExporter
 import me.kavishdevar.librepods.database.LibrePodsDatabase
 import me.kavishdevar.librepods.presentation.overlays.IslandWindow
 import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
@@ -39,6 +47,37 @@ class LibrePodsApplication: Application(), XposedServiceHelper.OnServiceListener
 
     val recordingRepository by lazy { RecordingRepository(applicationContext) }
     val heartRateRepository by lazy { HeartRateRepository(database.heartRateDao()) }
+
+    val heartRatePreferences by lazy { HeartRatePreferences(heartRateSharedPreferences) }
+
+    private val workoutScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val heartRateSharedPreferences by lazy {
+        getSharedPreferences(HeartRatePreferences.PREFERENCES_NAME, MODE_PRIVATE)
+    }
+
+    /** Driven by LibrePodsService; screens only read its state. */
+    val heartRateBlePeripheral by lazy { HeartRateBlePeripheral(applicationContext) }
+
+    val workoutPreferences by lazy { WorkoutPreferences(heartRateSharedPreferences) }
+
+    /** Opened off the main thread; Room migration and validation run inside [WorkoutDatabase.open]. */
+    val workoutDatabase by lazy {
+        workoutScope.async { WorkoutDatabase.open(applicationContext, heartRateSharedPreferences) }
+    }
+
+    val workoutRepository by lazy {
+        WorkoutRepository(
+            localStore = RoomWorkoutLocalStore(workoutDatabase),
+            healthConnectExporter = AndroidWorkoutHealthConnectExporter(this),
+            maxHeartRateProvider = { workoutPreferences.maxHeartRateBpm },
+            scope = workoutScope,
+        )
+    }
+
+    fun workoutDatabaseBackupNotice(): String? = WorkoutDatabase.recoveredBackupName(heartRateSharedPreferences)
+
+    fun dismissWorkoutDatabaseBackupNotice() = WorkoutDatabase.clearRecoveredBackupNotice(heartRateSharedPreferences)
 
     val healthConnectClient: HealthConnectClient? by lazy {
         val status = HealthConnectClient.getSdkStatus(this)
@@ -94,6 +133,8 @@ class LibrePodsApplication: Application(), XposedServiceHelper.OnServiceListener
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
         GestureFeedback.init(this)
+
+        workoutRepository.retryPendingHealthConnectExports()
 
         super<Application>.onCreate()
 
