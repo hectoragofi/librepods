@@ -116,6 +116,12 @@ android {
             dimension = "env"
             buildConfigField("Boolean", "PLAY_BUILD", "false")
         }
+        create("coexist") {
+            // Installs next to the regular app as me.kavishdevar.librepods.hearttest.
+            dimension = "env"
+            applicationIdSuffix = ".hearttest"
+            buildConfigField("Boolean", "PLAY_BUILD", "false")
+        }
         create("play") {
             dimension = "env"
             buildConfigField("Boolean", "PLAY_BUILD", "true")
